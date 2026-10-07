@@ -11,7 +11,7 @@ Claims are marked **VERIFIED** (run or read in code) or **ASSUMED**.
 | App (3 modes) | ✅ working (ASSUMED: the author's use, not run during setup) | `app/app.py` |
 | Engine build | ✅ present (VERIFIED) | `whisper.cpp/build/bin/Release/whisper.dll` + `ggml-vulkan.dll`, `GGML_VULKAN=1` in CMakeCache |
 | Models | ✅ present (VERIFIED) | base.en-q5_1, small.en-q5_1, large-v3-turbo-q5_0 in `whisper.cpp/models/` |
-| Tests | ✅ 25 characterization + architecture tests | baseline below |
+| Tests | ✅ 26 characterization + architecture tests | baseline below |
 | AI harness | ✅ set up (guard-hook live probe and CI run pending) | [`ai-harness-setup.md`](./ai-harness-setup.md) |
 
 ## What a user can do today
@@ -46,7 +46,7 @@ Claims are marked **VERIFIED** (run or read in code) or **ASSUMED**.
 
 | Suite | Result | Known failures (by name) |
 |---|---|---|
-| pytest (`app/tests/`, 25 tests: architecture, audio_io, capture segmenter, hallucination filter) | 25/25 pass (2.0 s) | none |
+| pytest (`app/tests/`, 26 tests: architecture, audio_io, capture segmenter, hallucination filter) | 26/26 pass (1.9 s) | none |
 | ruff check | 0 findings (after `a1dc6b3` sorted imports) | — |
 | pyright (basic) | 0 errors (`live_transcriber.py` excluded, open decision 1) | — |
 
@@ -66,8 +66,10 @@ Compare new runs against this list **by test name**.
    `audio_io.split_windows` overlaps windows by 1 s and its docstring says "the caller
    trims the overlap", but `App._transcribe_file` (`app/app.py:441`) appends every
    window's full text.
-2. **`.m4a` is offered but can't be decoded** (VERIFIED). It's in `AUDIO_EXTS`
-   (`app/audio_io.py:15`), but `miniaudio.FileFormat` = WAV, FLAC, MP3, VORBIS only.
+2. ~~**`.m4a` is offered but can't be decoded**~~ FIXED (2026-10-07): `.m4a` removed
+   from `AUDIO_EXTS`; undecodable files now raise a `ValueError` naming the supported
+   formats instead of miniaudio's bare `('failed to decode file', -1)`. AAC support
+   would need an ffmpeg/PyAV dependency (not added).
 3. **ctypes struct drift**: `app/whisper_native.py` hard-codes `whisper.h` layouts at
    `6e4ab85`. A newer whisper.cpp build can crash or mis-set params silently.
 4. **Cross-thread attributes without locks**: `busy`, `language`, `loaded_model_path`,

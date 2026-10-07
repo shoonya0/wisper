@@ -2,6 +2,7 @@
 
 import miniaudio
 import numpy as np
+import pytest
 
 import audio_io
 
@@ -33,10 +34,20 @@ def test_consecutive_windows_overlap_by_one_second():
     assert s1 + n1 - s2 == 1 * SR
 
 
-def test_m4a_is_offered_but_miniaudio_cannot_decode_it():
-    # TODO(known issue 2): .m4a appears in the file picker but miniaudio has no AAC decoder.
-    assert ".m4a" in audio_io.AUDIO_EXTS
-    assert "AAC" not in {f.name for f in miniaudio.FileFormat}
+def test_file_picker_only_offers_formats_miniaudio_can_decode():
+    # Known issue 2: .m4a used to be offered, but miniaudio has no AAC decoder.
+    ext_to_format = {".wav": "WAV", ".mp3": "MP3", ".flac": "FLAC", ".ogg": "VORBIS"}
+    decodable = {f.name for f in miniaudio.FileFormat}
+    assert audio_io.AUDIO_EXTS <= ext_to_format.keys()
+    assert all(ext_to_format[e] in decodable for e in audio_io.AUDIO_EXTS)
+
+
+def test_undecodable_file_raises_error_naming_supported_formats(tmp_path):
+    path = tmp_path / "voice.m4a"
+    path.write_bytes(b"\x00\x00\x00\x20ftypM4A " + bytes(64))
+
+    with pytest.raises(ValueError, match=r"voice\.m4a.*WAV, MP3, FLAC, OGG"):
+        audio_io.decode_to_16k_mono(path)
 
 
 def test_decode_wav_returns_16k_mono_float32(tmp_path):
