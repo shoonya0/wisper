@@ -12,15 +12,15 @@ thread (whisper contexts are not thread safe, so only that thread touches it).
 import queue
 import threading
 import time
-from pathlib import Path
 import tkinter as tk
+from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 
 import numpy as np
 
-import capture
 import audio_io
+import capture
 import priority
 from whisper_native import Whisper
 

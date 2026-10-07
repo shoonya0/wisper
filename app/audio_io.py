@@ -7,8 +7,8 @@ point whisper-cli at them.
 
 from pathlib import Path
 
-import numpy as np
 import miniaudio
+import numpy as np
 
 TARGET_SR = 16000
 
