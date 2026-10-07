@@ -1,6 +1,6 @@
 # Wisper: current state (snapshot 2026-10-07)
 
-Snapshot taken at `fd46f99` + narration spike N0 on `chore/ai-harness` (not pushed).
+Snapshot taken at `9c2d7c5` + narration N1 (split window) on `chore/ai-harness` (not pushed).
 One page; update it when an increment lands.
 Claims are marked **VERIFIED** (run or read in code) or **ASSUMED**.
 
@@ -8,11 +8,11 @@ Claims are marked **VERIFIED** (run or read in code) or **ASSUMED**.
 
 | Area | State | Notes |
 |---|---|---|
-| App (3 modes) | ✅ working (ASSUMED: the author's use, not run during setup) | `app/app.py` |
+| App (3 modes) | ✅ working (ASSUMED: the author's use, not run during setup) | `app/app.py`. Since N1 the window is split: STT on the left, a TTS placeholder on the right. The app starts and loads a model on the GPU (VERIFIED by screenshot, N1) |
 | Engine build | ✅ present (VERIFIED) | `whisper.cpp/build/bin/Release/whisper.dll` + `ggml-vulkan.dll`, `GGML_VULKAN=1` in CMakeCache |
 | Models | ✅ present (VERIFIED) | base.en-q5_1, small.en-q5_1, large-v3-turbo-q5_0 in `whisper.cpp/models/` |
-| Narration (TTS) | 🚧 spike N0 done, no UI yet | Kokoro-82M fp32 on the CPU: RTF 0.36–0.40 with 4 threads ([performance.md](./performance.md)); model in `models/kokoro/` |
-| Tests | ✅ 26 characterization + architecture tests | baseline below |
+| Narration (TTS) | 🚧 N0 spike + N1 layout done, no narration yet | Kokoro-82M fp32 on the CPU: RTF 0.36–0.40 with 4 threads ([performance.md](./performance.md)); model in `models/kokoro/` |
+| Tests | ✅ 29 tests (characterization, architecture, window layout) | baseline below |
 | AI harness | ✅ set up (guard-hook live probe and CI run pending) | [`ai-harness-setup.md`](./ai-harness-setup.md) |
 
 ## What a user can do today
@@ -57,11 +57,11 @@ Claims are marked **VERIFIED** (run or read in code) or **ASSUMED**.
 - **Fast check:** `node tools/verify.mjs` (ruff check → pyright → pytest, ~6 s). **Full:** `node tools/verify.mjs --full` (same today; slow GPU checks go there).
 - **Tests only:** `app\.venv\Scripts\python.exe -m pytest` (config in root `pyproject.toml`).
 
-## Test baseline (at `a1dc6b3` + the harness tests)
+## Test baseline (at N1)
 
 | Suite | Result | Known failures (by name) |
 |---|---|---|
-| pytest (`app/tests/`, 26 tests: architecture, audio_io, capture segmenter, hallucination filter) | 26/26 pass (1.9 s) | none |
+| pytest (`app/tests/`, 29 tests: architecture, audio_io, capture segmenter, hallucination filter, window layout) | 29/29 pass (2.5 s) | none |
 | ruff check | 0 findings (after `a1dc6b3` sorted imports) | — |
 | pyright (basic) | 0 errors (`live_transcriber.py` excluded, open decision 1) | — |
 
@@ -94,6 +94,10 @@ Compare new runs against this list **by test name**.
 6. **Duplicate code**: `app/live_transcriber.py` duplicates the capture/segmenter and
    UI. Fixes made in `capture.py` won't reach it.
 7. **Line endings**: `core.autocrlf` converts LF→CRLF. There's no `.gitattributes`.
+8. ~~**Status line and level meter never visible**~~ FIXED in N1 (2026-10-07): at the
+   default 940×640 the transcript's requested height pushed the status row off the
+   window (VERIFIED: `winfo_ismapped()` = 0 on the pre-N1 code). The status row is now
+   packed at the bottom before the transcript; `test_window_layout.py` guards it.
 
 ## Possible next steps (from the original README)
 
@@ -112,7 +116,7 @@ Compare new runs against this list **by test name**.
   ADR: [`adr/0001-tts-engine-kokoro-onnx.md`](./adr/0001-tts-engine-kokoro-onnx.md) (Accepted).
   **N0 (spike) done 2026-10-07:** CPU only, fp32, 4 threads, RTF 0.36–0.40, a 5-word
   first chunk in 0.73–0.84 s; ADR Accepted (still pending: the user listens to
-  `models/kokoro/samples/`). **Next: N1** (split the window into STT and TTS panes, no
-  behavior change).
+  `models/kokoro/samples/`). **N1 (split window) done 2026-10-07.** **Next: N2**
+  (narration box with Save… / Clear / Copy all, no audio yet).
 - Still open: fix known issue 1 (overlap trimming), with characterization tests on
   `audio_io.split_windows` first.

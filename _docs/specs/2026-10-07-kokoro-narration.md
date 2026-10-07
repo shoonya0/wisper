@@ -62,8 +62,12 @@ or to both.
 └───────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-- A `ttk.PanedWindow` (horizontal) with two equal panes. The user can drag the divider.
-- Default window size goes from 940×640 to about 1400×680. Minimum width is about 1000.
+- A `tk.PanedWindow` (horizontal) with two equal panes. The user can drag the divider.
+  It's the classic tk widget rather than `ttk`, because only it supports a per-pane
+  `minsize`, which keeps every control visible however far the divider is dragged.
+- Default window size goes from 940×640 to 1440×680. Minimum width is 1126 px
+  (`STT_MIN_W` 700 + `TTS_MIN_W` 420 + 6 px divider). The STT control row needs 653 px
+  (measured in N1). `TTS_MIN_W` is rechecked when N2 and N6 add controls.
 - Each pane has its own status line. STT status messages don't overwrite TTS ones, and
   TTS messages don't overwrite STT ones.
 - Same dark theme (`DARK` palette) and same button styles as today.
@@ -278,7 +282,7 @@ the UI. Moving Kokoro to the GPU is not a fallback (§5.1).
 | # | Increment | Changes | Tests added | Done when |
 |---|---|---|---|---|
 | **N0** | **Spike: measure Kokoro on this PC** (no app code) | `kokoro-onnx>=0.6.1,<0.7` → `app/requirements.txt` (measured: 0.6.1 with onnxruntime 1.30.0); model files → `models/kokoro/`; `tools/tts_bench.py` (load time, RTF, first-sentence latency; fp32 vs int8; thread counts; CPU only); `.gitignore` comment for `/models/` | none (bench script) | Numbers in `performance.md`, ADR 0001 → Accepted or Rejected, default model variant chosen. Confirms: espeak works offline, voice list, `hi`/`es`/`fr` voices produce speech |
-| **N1** | **Split layout** (refactor, no behavior change) | `app.py`: STT widgets move into a left frame of a `PanedWindow`; the right pane is a placeholder "Text to speech (coming soon)"; window size; per-pane status line | none new; the 26 baseline tests must still pass | T-UI-1 manual checklist passes |
+| **N1** | **Split layout** (refactor, no behavior change) | `app.py`: STT widgets move into a left frame of a `PanedWindow`; the right pane is a placeholder "Text to speech (coming soon)"; window size; per-pane status line. Also fixes a bug found while doing this: the STT status line and level meter were never visible at the default size | `test_window_layout.py` (3 tests: pane order, status lines visible, controls visible at the minimum size) + the 26 baseline tests | T-UI-1 manual checklist passes |
 | **N2** | **Narration box + Save/Clear/Copy all** (no audio yet) | `app.py`: editable text box, the three buttons, `Ctrl+A`; Speak button present but disabled | none (pure UI). Manual T-UI-2 | Box works on its own, STT box untouched |
 | **N3** | **`tts.py` engine leaf** | `load`, `voices`, `lang_for_voice`, `split_sentences`, `synthesize` | `test_tts_split.py` (≈12 cases: abbreviations, decimals, `…`, `।`, blank lines, long piece re-split, round trip, empty); `test_tts_voices.py` (`lang_for_voice` table); `test_tts_engine.py` (**slow**, skipped with a reason when `models/kokoro/` is missing: "Hello world." → float32, 24 kHz, 0.4–3 s) | tests pass; architecture test lists `tts` |
 | **N4** | **`playback.py` leaf** | WASAPI output list, `find_virtual_cable`, `targets_for`, `resample_to`, `Player(stream_factory)` | `test_playback.py`: cable detection names; `targets_for` for all 3 modes, including a missing Others device; resample length and dtype; `Player` with fake streams: both streams get identical blocks, `stop()` → no writes after the current block, stop latency < 1 block, a device error → error callback, not an exception | tests pass; architecture test lists `playback` |

@@ -22,4 +22,6 @@ typeCheckingMode = "basic"
 [tool.pytest.ini_options]
 testpaths = ["app/tests"]
 pythonpath = ["app"]
-addopts = "-q"
+# --capture=sys, not the default fd capture: with fd capture, creating a Tk window
+# (test_window_layout.py) failed to read tk.tcl in 6 of 20 runs; with sys capture, 0 of 20.
+addopts = "-q --capture=sys"

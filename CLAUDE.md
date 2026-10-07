@@ -55,6 +55,9 @@ All docs live in `_docs/`. Never create a `docs/` folder.
   delete `whisper.cpp/`: it's gitignored, 1.3 GB, and git can't restore it.
 - The code is hand-formatted (aligned tables): no `ruff format` or auto-formatting. Line
   length is 120.
+- Tests that build a Tk window keep it invisible (`-alpha 0`, `-toolwindow`) and rely on
+  `--capture=sys`: verify runs after every turn, and visible test windows flicker on the
+  user's desktop. Don't launch the real app from the agent without asking.
 - New dependency: say why and check that it exists and is maintained. Runtime deps go in
   `app/requirements.txt`, tools in `app/requirements-dev.txt`.
 

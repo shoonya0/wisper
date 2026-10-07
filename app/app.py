@@ -74,6 +74,12 @@ DARK = {
 }
 
 
+# Split window (narration spec §3.1): minimum pane widths keep every control visible.
+STT_MIN_W = 700   # Start + Mode + Model + Lang row
+TTS_MIN_W = 420
+SASH_W    = 6
+
+
 def is_junk(text):
     t = text.strip().lower()
     return (t in HALLUCINATIONS
@@ -98,13 +104,15 @@ class App:
         self.want_model_path = None
 
         root.title("Wisper — local speech-to-text (RX 580 · Vulkan)")
-        root.geometry("940x640")
-        root.minsize(640, 420)
+        root.geometry("1440x680")
+        root.minsize(STT_MIN_W + TTS_MIN_W + SASH_W, 420)
 
         self._apply_theme(root)
-        self._build_controls(root)
-        self._build_transcript(root)
-        self._build_status(root)
+        stt_pane, tts_pane = self._build_panes(root)
+        self._build_controls(stt_pane)
+        self._build_status(stt_pane)      # before the transcript so it keeps its row
+        self._build_transcript(stt_pane)
+        self._build_tts_pane(tts_pane)
 
         root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.worker = threading.Thread(target=self._worker_loop, daemon=True)
@@ -127,6 +135,7 @@ class App:
                         troughcolor=d["field"], focuscolor=d["accent"])
         style.configure("TFrame", background=d["bg"])
         style.configure("TLabel", background=d["bg"], foreground=d["fg"])
+        style.configure("Header.TLabel", foreground=d["muted"], font=("Segoe UI", 10, "bold"))
 
         style.configure("TButton", background=d["field"], foreground=d["fg"],
                         bordercolor=d["border"], focuscolor=d["bg"], padding=6)
@@ -180,8 +189,33 @@ class App:
 
     # ---------------------------------------------------------------- UI build
 
-    def _build_controls(self, root):
-        bar = ttk.Frame(root, padding=8)
+    def _build_panes(self, root):
+        """Left pane: speech to text (the original app). Right pane: text to speech."""
+        panes = tk.PanedWindow(root, orient="horizontal", sashwidth=SASH_W, sashrelief="flat",
+                               bg=DARK["border"], borderwidth=0)
+        panes.pack(fill="both", expand=True)
+        stt_pane = ttk.Frame(panes)
+        tts_pane = ttk.Frame(panes)
+        # minsize keeps every control of a pane visible however far the sash is dragged.
+        panes.add(stt_pane, minsize=STT_MIN_W, width=720, stretch="always")
+        panes.add(tts_pane, minsize=TTS_MIN_W, width=720, stretch="always")
+        ttk.Label(stt_pane, text="Speech to text", style="Header.TLabel",
+                  padding=(8, 6, 8, 0)).pack(anchor="w")
+        ttk.Label(tts_pane, text="Text to speech", style="Header.TLabel",
+                  padding=(8, 6, 8, 0)).pack(anchor="w")
+        return stt_pane, tts_pane
+
+    def _build_tts_pane(self, parent):
+        # Placeholder until narration lands (_docs/specs/2026-10-07-kokoro-narration.md, N2–N7).
+        status = ttk.Frame(parent, padding=(8, 4))
+        status.pack(side="bottom", fill="x")
+        self.tts_status_var = tk.StringVar(value="Narration isn't available yet.")
+        ttk.Label(status, textvariable=self.tts_status_var).pack(side="left")
+        ttk.Label(parent, text="Narration with Kokoro-82M is coming soon.",
+                  foreground=DARK["muted"]).pack(expand=True)
+
+    def _build_controls(self, parent):
+        bar = ttk.Frame(parent, padding=8)
         bar.pack(fill="x")
 
         self.start_btn = ttk.Button(bar, text="▶  Start", width=11,
@@ -214,7 +248,7 @@ class App:
             self, "language", self.lang_var.get().strip() or "auto"))
 
         # Second row: device picker / file picker (swapped per mode).
-        row2 = ttk.Frame(root, padding=(8, 0))
+        row2 = ttk.Frame(parent, padding=(8, 0))
         row2.pack(fill="x")
         self.device_label = ttk.Label(row2, text="Device:")
         self.device_var = tk.StringVar()
@@ -224,17 +258,17 @@ class App:
         self.file_label = ttk.Label(row2, text="No file selected.")
         self._row2 = row2
 
-        actions = ttk.Frame(root, padding=(8, 6))
+        actions = ttk.Frame(parent, padding=(8, 6))
         actions.pack(fill="x")
         ttk.Button(actions, text="Copy all", command=self.copy_all).pack(side="right")
         ttk.Button(actions, text="Clear", command=self.clear).pack(side="right", padx=4)
         ttk.Button(actions, text="Save…", command=self.save).pack(side="right")
 
-    def _build_transcript(self, root):
+    def _build_transcript(self, parent):
         # Read-only for the user: starts disabled; only the app writes to it
         # (via _write_locked). Text stays selectable so Ctrl+C / Copy still work.
         self.text = ScrolledText(
-            root, wrap="word", font=("Segoe UI", 12), padx=10, pady=10,
+            parent, wrap="word", font=("Segoe UI", 12), padx=10, pady=10,
             bg=DARK["surface"], fg=DARK["fg"], insertbackground=DARK["fg"],
             selectbackground=DARK["sel"], selectforeground=DARK["fg"],
             borderwidth=0, highlightthickness=1,
@@ -252,9 +286,11 @@ class App:
         self.text.bind("<Control-a>", self._select_all)
         self.text.bind("<Control-c>", lambda e: self.text.event_generate("<<Copy>>"))
 
-    def _build_status(self, root):
-        status = ttk.Frame(root, padding=(8, 4))
-        status.pack(fill="x")
+    def _build_status(self, parent):
+        status = ttk.Frame(parent, padding=(8, 4))
+        # Packed at the bottom before the transcript: the transcript's requested height
+        # used to push this row off the window (status and level meter never showed).
+        status.pack(side="bottom", fill="x")
         self.status_var = tk.StringVar(value="Loading model onto the GPU…")
         ttk.Label(status, textvariable=self.status_var).pack(side="left")
         self.level_bar = ttk.Progressbar(status, length=120, maximum=0.15)

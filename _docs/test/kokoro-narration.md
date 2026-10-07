@@ -12,6 +12,7 @@ Fast check after every step: `node tools/verify.mjs`. Single file:
 | File | Increment | Needs GPU / model / device? | Cases |
 |---|---|---|---|
 | `test_architecture.py` (changed) | N3, N4, N5 | no | `tts`, `playback`, `narrator` added to `PROJECT_MODULES` and `LEAVES`; leaves import no project module; `app` may import them |
+| `test_window_layout.py` | N1 | Tk window, **invisible** (alpha 0, no taskbar button) with fake Whisper and PyAudio; needs `--capture=sys` (set in `pyproject.toml`) | STT widgets in the left pane, left of the TTS pane; STT status line + level meter and TTS status line visible at the default size (regression for the pre-N1 bug); start/model/lang/device/level controls inside the left pane at the minimum window size |
 | `test_tts_split.py` | N3 | no | see §1.1 |
 | `test_tts_voices.py` | N3 | no | `lang_for_voice`: `af_heart`→`en-us`, `bm_george`→`en-gb`, `ef_dora`→`es`, `ff_siwis`→`fr-fr`, `hf_alpha`→`hi`, `if_sara`→`it`, `pf_dora`→`pt-br`; an unknown prefix → `ValueError` naming the voice |
 | `test_tts_engine.py` | N3 | **model files** (skipped with reason `"models/kokoro/ missing: see current-state.md"` when absent, as on CI) | load; `voices()` non-empty and contains the default voice; `synthesize("Hello world.")` → `float32`, 1-D, 24 kHz, duration 0.4–3 s, peak in (0.01, 1.0] |
@@ -89,7 +90,7 @@ Run with `cd app` then `.venv\Scripts\python.exe app.py`, so tracebacks are visi
 
 | ID | Increment | Steps | Pass when |
 |---|---|---|---|
-| T-UI-1 | N1 | Open the app. Use Dictation, Live captions and File once each; change model; Save…, Clear, Copy all in the transcript | Left pane works as before; right pane shows the placeholder; dragging the divider resizes both; at the minimum window width every control is still visible |
+| T-UI-1 | N1 | Open the app. Use Dictation, Live captions and File once each; change model; Save…, Clear, Copy all in the transcript | Left pane works as before; the bottom of the left pane shows "Ready • model • queue" and the Level meter moves while you speak; right pane shows the placeholder; dragging the divider resizes both; at the minimum window width every control is still visible |
 | T-UI-2 | N2 | Type and paste text in the narration box; Copy all → paste in Notepad; Save… → open the `.txt`; Clear | Each action only touches the narration box; the transcript is unchanged; Unicode (Hindi) survives Save |
 | T-TTS-1 | N5 | Paste 3 paragraphs; pick `af_heart`, 1.0; Speak | First sound within about 1 s; reads all of it in order; no gaps longer than about 0.3 s; button returns to Speak; status "Narration complete." |
 | T-TTS-2 | N5 | Change voice (UK English, Hindi, Spanish, French) and speed 1.5; Speak text in that language | Voice and speed change; each voice pronounces its language intelligibly |
