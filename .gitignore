@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+app/.venv/
+
+# Models (large; download separately)
+whisper.cpp/models/*.bin
+!whisper.cpp/models/for-tests-*.bin
+
+# whisper.cpp build output
+whisper.cpp/build/
+
+# Editor / OS
+.vscode/
+.idea/
+*.log
+Thumbs.db
+
+# Empty scaffold dirs (superseded by app/ and whisper.cpp/)
+/src/
+/scripts/
+/models/
+/audio_out/
