@@ -12,6 +12,12 @@ are no per-area `_docs/` folders. `whisper.cpp/` is upstream code and isn't docu
 | 3 | [performance.md](./performance.md) | Why whisper.cpp + Vulkan on the RX 580, measured speeds, latency levers |
 | — | [ai-harness-setup.md](./ai-harness-setup.md) | Record of the AI-harness setup (tools, decisions, evidence) |
 
+## Active work
+
+| Feature | Spec | Test plan | Decisions |
+|---|---|---|---|
+| Narration (Kokoro-82M TTS) | [specs/2026-10-07-kokoro-narration.md](./specs/2026-10-07-kokoro-narration.md) | [test/kokoro-narration.md](./test/kokoro-narration.md) | [adr/0001-tts-engine-kokoro-onnx.md](./adr/0001-tts-engine-kokoro-onnx.md) |
+
 ## Where new docs go
 
 | Kind | Path |

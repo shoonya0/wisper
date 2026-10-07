@@ -90,5 +90,12 @@ Compare new runs against this list **by test name**.
 
 ## Next task
 
-- First harness task (suggested): fix known issue 1 (overlap trimming) with
-  characterization tests on `audio_io.split_windows` first.
+- **Planned feature: Narration (text to speech with Kokoro-82M).** The window splits
+  into STT (left) and TTS (right), with output modes Only me / Only others / Both.
+  Spec: [`specs/2026-10-07-kokoro-narration.md`](./specs/2026-10-07-kokoro-narration.md).
+  Test plan: [`test/kokoro-narration.md`](./test/kokoro-narration.md).
+  ADR: [`adr/0001-tts-engine-kokoro-onnx.md`](./adr/0001-tts-engine-kokoro-onnx.md) (Proposed).
+  Spec status: draft, waiting for user review. First increment: **N0** (measure Kokoro on
+  this PC).
+- Still open: fix known issue 1 (overlap trimming), with characterization tests on
+  `audio_io.split_windows` first.
