@@ -1,0 +1,48 @@
+# .github/workflows/verify.yml: runs the full check on every push to the default branch
+# and on every pull request. Wisper is Windows-only (WASAPI, ctypes to whisper.dll), so
+# the matrix is windows-latest only. The GPU engine isn't built in CI: tests that need
+# whisper.dll belong in a separate, manually run rung (see .claude/skills/verify-change).
+#
+# Both master and main are listed because the remote had no branches when this was written.
+# After the first push, confirm with: gh run list --workflow verify.yml  (expect jobs > 0)
+
+name: verify
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: verify (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: app/requirements*.txt
+
+      - run: python -m pip install -r app/requirements-dev.txt
+
+      - run: node tools/verify.mjs --full
