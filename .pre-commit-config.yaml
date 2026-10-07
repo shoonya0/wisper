@@ -1,0 +1,17 @@
+# Fast gates only. Install once: app\.venv\Scripts\pre-commit.exe install
+repos:
+  - repo: local
+    hooks:
+      - id: verify
+        name: verify (ruff check + pyright + pytest)
+        entry: node tools/verify.mjs
+        language: system
+        pass_filenames: false
+        always_run: true
+      - id: graph-impact
+        name: code-review-graph impact (advisory)
+        entry: node -e "const r=require('child_process').spawnSync('code-review-graph',['detect-changes','--brief'],{stdio:'inherit',shell:true});process.exit(0)"
+        language: system
+        pass_filenames: false
+        always_run: true
+        verbose: true

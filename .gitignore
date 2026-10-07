@@ -21,3 +21,17 @@ Thumbs.db
 /scripts/
 /models/
 /audio_out/
+
+# Not project code: upstream whisper.cpp clone (see _docs/current-state.md to rebuild) and the setup playbook
+/whisper.cpp/
+/stepsForCreatingApp/
+
+# AI harness: local state
+.code-review-graph/
+agent-browser.json
+.agent/
+.claude/settings.local.json
+CLAUDE.local.md
+.scaffold-tmp/
+.pytest_cache/
+.ruff_cache/

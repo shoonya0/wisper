@@ -1,0 +1,86 @@
+{
+  "env": {
+    "CLAUDE_VERIFY_CMD": "node tools/verify.mjs",
+    "CLAUDE_VERIFY_MAX_BLOCKS": "3"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(node tools/verify.mjs)",
+      "Bash(node tools/verify.mjs --full)",
+      "Bash(app/.venv/Scripts/python.exe -m pytest *)",
+      "Bash(app/.venv/Scripts/python.exe -m ruff check *)",
+      "Bash(app/.venv/Scripts/python.exe -m pyright *)",
+      "Bash(git status)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(gh pr checks *)",
+      "Bash(gh run list *)",
+      "Bash(code-review-graph *)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "-e",
+              "const fs=require('fs');const p=require('path').join(process.env.CLAUDE_PROJECT_DIR||'.','_docs','current-state.md');if(fs.existsSync(p))console.log(fs.readFileSync(p,'utf8').split(/\\r?\\n/).slice(0,40).join('\\n'))"
+            ],
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/.claude/hooks/protect-files.mjs"
+            ],
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/.claude/hooks/guard-shell.mjs"
+            ],
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/.claude/hooks/stop-verify.mjs"
+            ],
+            "timeout": 900
+          }
+        ]
+      }
+    ]
+  },
+  "enabledPlugins": {
+    "context7@claude-plugins-official": true,
+    "security-guidance@claude-plugins-official": true
+  }
+}
