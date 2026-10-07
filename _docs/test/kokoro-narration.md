@@ -34,6 +34,11 @@ Fast check after every step: `node tools/verify.mjs`. Single file:
 | round trip | any of the above | `" ".join(pieces).split() == text.split()` |
 | empty / whitespace | `""`, `"  \n "` | `[]` |
 | quotes | `'He said "Go." Then left.'` | 2 pieces, the closing quote stays with the first |
+| first chunk, clause | `"Hi everyone, thanks for joining the call today, let me walk you through it."` | first piece `"Hi everyone,"`; the rest follows in order |
+| first chunk, no clause mark | 16 words, no `,;:` | first piece = first 6 words; second = the remaining 10 |
+| first chunk, late clause mark | 16 words, first `,` after word 10 | first piece = first 6 words (the late comma is ignored) |
+| first chunk, already short | `"Okay. Let's begin the meeting now, everyone."` | first piece `"Okay."` unchanged (≤ 6 words) |
+| first chunk only | 3 long sentences | only the first piece is shortened; the others follow the normal rules |
 
 ### 1.2 `playback`
 
@@ -68,7 +73,9 @@ be made slow or raise. `play(samples, stop_event)` records what played and honor
 ## 2. Performance checks (N0 and N5; record in `performance.md`)
 
 Run `app\.venv\Scripts\python.exe tools/tts_bench.py` (N0). It prints a table: variant
-(fp32/int8), threads, load s, first-sentence s, RTF p50/p95 over 10 paragraphs. Then
+(fp32/int8), threads, load s, first-sentence s, RTF p50/p95 over 10 sentences.
+**N0 done (2026-10-07):** fp32 with 4 threads, RTF 0.36–0.40; a 5-word first chunk is
+ready in 0.73–0.84 s; int8 is rejected (~10× slower). Numbers are in `performance.md`. Then
 measure in the real app (N5): Speak → first sound and Clear → silence, with a stopwatch
 or by logging `time.perf_counter()` at the button press and at the first `write`. Targets
 are in spec §6.
@@ -85,7 +92,7 @@ Run with `cd app` then `.venv\Scripts\python.exe app.py`, so tracebacks are visi
 | T-UI-1 | N1 | Open the app. Use Dictation, Live captions and File once each; change model; Save…, Clear, Copy all in the transcript | Left pane works as before; right pane shows the placeholder; dragging the divider resizes both; at the minimum window width every control is still visible |
 | T-UI-2 | N2 | Type and paste text in the narration box; Copy all → paste in Notepad; Save… → open the `.txt`; Clear | Each action only touches the narration box; the transcript is unchanged; Unicode (Hindi) survives Save |
 | T-TTS-1 | N5 | Paste 3 paragraphs; pick `af_heart`, 1.0; Speak | First sound within about 1 s; reads all of it in order; no gaps longer than about 0.3 s; button returns to Speak; status "Narration complete." |
-| T-TTS-2 | N5 | Change voice (UK English, Hindi) and speed 1.5; Speak | Voice and speed change; the Hindi voice pronounces the Hindi text |
+| T-TTS-2 | N5 | Change voice (UK English, Hindi, Spanish, French) and speed 1.5; Speak text in that language | Voice and speed change; each voice pronounces its language intelligibly |
 | T-TTS-3 | N5 | Speak a long text; press **Clear** after about 3 s | Silence within 200 ms (no trailing sentence); box empty; status "Narration stopped." |
 | T-TTS-4 | N5 | Speak; press **Stop**; then Speak again | Stops quickly, text kept; the second Speak starts from the beginning |
 | T-TTS-5 | N5 | Speak while Dictation is running | Both work; dictation latency not noticeably worse |

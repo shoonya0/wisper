@@ -1,6 +1,6 @@
 # Wisper: current state (snapshot 2026-10-07)
 
-Snapshot taken at `a1dc6b3` + AI harness commits on `chore/ai-harness` (not pushed).
+Snapshot taken at `fd46f99` + narration spike N0 on `chore/ai-harness` (not pushed).
 One page; update it when an increment lands.
 Claims are marked **VERIFIED** (run or read in code) or **ASSUMED**.
 
@@ -11,6 +11,7 @@ Claims are marked **VERIFIED** (run or read in code) or **ASSUMED**.
 | App (3 modes) | ✅ working (ASSUMED: the author's use, not run during setup) | `app/app.py` |
 | Engine build | ✅ present (VERIFIED) | `whisper.cpp/build/bin/Release/whisper.dll` + `ggml-vulkan.dll`, `GGML_VULKAN=1` in CMakeCache |
 | Models | ✅ present (VERIFIED) | base.en-q5_1, small.en-q5_1, large-v3-turbo-q5_0 in `whisper.cpp/models/` |
+| Narration (TTS) | 🚧 spike N0 done, no UI yet | Kokoro-82M fp32 on the CPU: RTF 0.36–0.40 with 4 threads ([performance.md](./performance.md)); model in `models/kokoro/` |
 | Tests | ✅ 26 characterization + architecture tests | baseline below |
 | AI harness | ✅ set up (guard-hook live probe and CI run pending) | [`ai-harness-setup.md`](./ai-harness-setup.md) |
 
@@ -39,6 +40,20 @@ Claims are marked **VERIFIED** (run or read in code) or **ASSUMED**.
   Then put `ggml-base.en-q5_1.bin`, `ggml-small.en-q5_1.bin` and
   `ggml-large-v3-turbo-q5_0.bin` in `whisper.cpp/models/`.
   **Keep `6e4ab85` unless you also re-check the ctypes structs** (architecture-overview).
+- **Narration setup (Kokoro TTS model, gitignored, ~353 MB).** `kokoro-onnx` comes in
+  through `app/requirements.txt`; espeak-ng is bundled, so there's nothing to install
+  system-wide. Download the model files from the `kokoro-onnx` release `model-files-v1.1`
+  into `models/kokoro/` and check the hashes (VERIFIED 2026-10-07):
+  ```bash
+  mkdir -p models/kokoro && cd models/kokoro
+  B=https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.1
+  curl -LO $B/kokoro-v1.0.onnx && curl -LO $B/voices-v1.0.bin
+  # sha256 kokoro-v1.0.onnx  beb0d1848dee9a49da392cc3df26958d46cfa35d321edf434f52949153f0df3a
+  # sha256 voices-v1.0.bin   bca610b8308e8d99f32e6fe4197e7ec01679264efed0cac9140fe9c29f1fbf7d
+  sha256sum kokoro-v1.0.onnx voices-v1.0.bin
+  ```
+  Use fp32 only: `kokoro-v1.0.int8.onnx` is ~10× slower on this CPU. Benchmark:
+  `app\.venv\Scripts\python.exe tools/tts_bench.py --variants fp32 --threads 4`.
 - **Fast check:** `node tools/verify.mjs` (ruff check → pyright → pytest, ~6 s). **Full:** `node tools/verify.mjs --full` (same today; slow GPU checks go there).
 - **Tests only:** `app\.venv\Scripts\python.exe -m pytest` (config in root `pyproject.toml`).
 
@@ -94,8 +109,10 @@ Compare new runs against this list **by test name**.
   into STT (left) and TTS (right), with output modes Only me / Only others / Both.
   Spec: [`specs/2026-10-07-kokoro-narration.md`](./specs/2026-10-07-kokoro-narration.md).
   Test plan: [`test/kokoro-narration.md`](./test/kokoro-narration.md).
-  ADR: [`adr/0001-tts-engine-kokoro-onnx.md`](./adr/0001-tts-engine-kokoro-onnx.md) (Proposed).
-  Spec status: draft, waiting for user review. First increment: **N0** (measure Kokoro on
-  this PC).
+  ADR: [`adr/0001-tts-engine-kokoro-onnx.md`](./adr/0001-tts-engine-kokoro-onnx.md) (Accepted).
+  **N0 (spike) done 2026-10-07:** CPU only, fp32, 4 threads, RTF 0.36–0.40, a 5-word
+  first chunk in 0.73–0.84 s; ADR Accepted (still pending: the user listens to
+  `models/kokoro/samples/`). **Next: N1** (split the window into STT and TTS panes, no
+  behavior change).
 - Still open: fix known issue 1 (overlap trimming), with characterization tests on
   `audio_io.split_windows` first.

@@ -2,11 +2,11 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft, waiting for user review |
+| Status | In progress: N0 (spike) done 2026-10-07, next N1 |
 | Date | 2026-10-07 |
 | Owner | shoonya0 |
 | Test plan | [`_docs/test/kokoro-narration.md`](../test/kokoro-narration.md) |
-| Decision record | [`_docs/adr/0001-tts-engine-kokoro-onnx.md`](../adr/0001-tts-engine-kokoro-onnx.md) (Proposed) |
+| Decision record | [`_docs/adr/0001-tts-engine-kokoro-onnx.md`](../adr/0001-tts-engine-kokoro-onnx.md) (Accepted) |
 
 Claims are marked **VERIFIED** (run, read in code or read in the upstream source) or
 **ASSUMED** (to be confirmed in increment N0).
@@ -73,7 +73,7 @@ or to both.
 | Control | Behavior |
 |---|---|
 | **Speak / Stop** button (accent) | Speak: reads the whole box from the start. While speaking, the label changes to "⏹ Stop". Disabled while the Kokoro model is loading or missing, or when the box is empty |
-| Voice | Kokoro voices from `voices-v1.0.bin`, grouped by language prefix (`af_`/`am_` = US English, `bf_`/`bm_` = UK English, `e`, `f`, `h`, `i`, `p`). Default `af_heart` (ASSUMED to be the best English voice; check in N0). The language passed to Kokoro is derived from the voice prefix |
+| Voice | Kokoro voices from `voices-v1.0.bin`, grouped by language prefix (`af_`/`am_` = US English, `bf_`/`bm_` = UK English, `e`, `f`, `h`, `i`, `p`). Default `af_heart` (VERIFIED present among the 54 voices; how it sounds is checked in T-TTS-1). The language passed to Kokoro is derived from the voice prefix |
 | Speed | 0.8 / 0.9 / 1.0 / 1.1 / 1.25 / 1.5. Default 1.0 |
 | Output | Radio buttons: Only me · Only others · Both |
 | Me device | Output devices (WASAPI). Default = the Windows default output |
@@ -153,9 +153,10 @@ Full reasoning is in ADR 0001. In short:
   `create(text, voice, speed, lang) -> (float32 samples, sample_rate)`. The output is
   24 kHz mono (VERIFIED from the model card).
 - Model files (gitignored, downloaded once from the `kokoro-onnx` GitHub release
-  `model-files-v1.1`): `kokoro-v1.0.onnx` (~300 MB fp32) or `kokoro-v1.0.int8.onnx`
-  (~80 MB), plus `voices-v1.0.bin`. They live in **`models/kokoro/`**, which is already
-  gitignored (`/models/`). Which variant is the default depends on N0 measurements.
+  `model-files-v1.1`): **`kokoro-v1.0.onnx` (fp32, 325 MB)** plus `voices-v1.0.bin`
+  (28 MB). They live in **`models/kokoro/`**, which is gitignored (`/models/`).
+  **N0 result:** the int8 variant is ~10× *slower* than fp32 on this CPU, so fp32 is the
+  only supported variant (`performance.md`).
 - **Kokoro runs on the CPU only (user decision, 2026-10-07):** the GPU is reserved for
   Whisper, so dictation and narration can run at the same time without competing for it.
   A GPU path (DirectML) is out of scope for now and isn't measured in N0.
@@ -175,8 +176,19 @@ Sentence splitting (`split_sentences`) rules:
   blank lines.
 - Don't split after common abbreviations (`Mr.`, `Mrs.`, `Dr.`, `e.g.`, `i.e.`, `etc.`,
   `vs.`) or inside decimals (`3.14`).
-- A piece longer than `MAX_CHARS` (~300, tuned in N0 to stay under Kokoro's 510-phoneme
-  window) is split again at `,` `;` `:`, and as a last resort at a space.
+- A piece longer than `MAX_CHARS` (**120**) is split again at `,` `;` `:`, and as a last
+  resort at a space. `kokoro-onnx` already splits anything over its 510-phoneme window
+  (VERIFIED, `kokoro_onnx/chunker.py`), so `MAX_CHARS` isn't about the model limit. It
+  keeps each piece's synthesis short: N0 measured 89 characters → 5.07 s of audio, so
+  120 characters ≈ 7 s of audio ≈ 3 s of synthesis at RTF ≈ 0.4. Stop never waits for
+  synthesis (late results are dropped by generation id), but the TTS worker is busy
+  until the current piece finishes, so this bounds how long a new Speak right after
+  Stop can wait.
+- **Short first chunk (from N0):** if the **first** piece of a narration has more than
+  `FIRST_CHUNK_WORDS` (6) words, it is cut at the first `,` `;` `:` that falls **within
+  its first 6 words**, otherwise **at word 6**. So the first chunk is never longer than
+  6 words. Measured on an idle CPU: a 5-word first chunk is synthesized in
+  0.73–0.84 s versus 1.80 s for a 16-word sentence. Only the first piece gets this treatment.
 - Pieces are stripped. Empty pieces are dropped. **Joining the pieces gives back the
   original words in the original order** (tested).
 
@@ -220,8 +232,9 @@ Stop/Clear (UI thread): narrator.stop() → sets stop Event + gen += 1 → Playe
   so a sentence plays while the next one is computed.
 - On close: stop the narration, put `("stop",)` on `tts_jobs`, then close the streams.
 - `priority.boost_process()` already raises the process priority. onnxruntime intra-op
-  threads are capped (for example `intra_op_num_threads = physical cores - 1`, set in N0)
-  so the UI and the STT worker stay responsive.
+  threads are capped at **`intra_op_num_threads = 4`** (N0: as fast as 6 on the
+  i5-10400F, and leaves 2 cores free) so the UI and the STT worker stay responsive.
+  The session uses `providers=["CPUExecutionProvider"]` explicitly.
 
 ### 5.5 Errors and missing files
 
@@ -231,16 +244,16 @@ Stop/Clear (UI thread): narrator.stop() → sets stop Event + gen += 1 → Playe
   STT `("error", …)`.
 - A device open or write error → rule 3.3.9 (status line, no crash).
 
-## 6. Performance targets (checked in N0, recorded in `performance.md`)
+## 6. Performance targets (N0 results recorded in `performance.md`)
 
-| Metric | Target | Why |
-|---|---|---|
-| Kokoro load (cold) | ≤ 5 s, done in the background at app start | the app must open instantly; STT must not wait |
-| First sound after Speak (first sentence ≈ 15 words) | **≤ 1.0 s** p50, ≤ 1.5 s p95 | feels immediate in a call |
-| Real-time factor on CPU (synthesis time ÷ audio time) | **≤ 0.5** (2× faster than real time) | prefetching then always stays ahead, so there are no gaps between sentences |
-| Stop/Clear → silence | **≤ 200 ms** on all devices | requirement 5 |
-| Gap between sentences | ≤ 300 ms of silence beyond Kokoro's own pause | sounds natural |
-| STT impact while narrating | dictation RTF changes by < 10% | GPU vs CPU split should keep them independent |
+| Metric | Target | Why | N0 result (fp32, 4 threads) |
+|---|---|---|---|
+| Kokoro load (cold) | ≤ 5 s, done in the background at app start | the app must open instantly; STT must not wait | ✅ 1.3–1.5 s load + ~2.0 s warm-up |
+| First sound after Speak | **≤ 1.0 s** p50, ≤ 1.5 s p95 | feels immediate in a call | ✅ 0.73–0.84 s p50, max 0.91 s, with the 6-word first-chunk cap (❌ 1.80 s without). ⚠ 1.33 s under CPU contention, so re-measure with Dictation running in N5 |
+| Real-time factor on CPU (synthesis time ÷ audio time) | **≤ 0.5** (2× faster than real time) | prefetching then always stays ahead, so there are no gaps between sentences | ✅ 0.36–0.40 |
+| Stop/Clear → silence | **≤ 200 ms** on all devices | requirement 5 | measure in N5 |
+| Gap between sentences | ≤ 300 ms of silence beyond Kokoro's own pause | sounds natural | measure in N5 |
+| STT impact while narrating | dictation RTF changes by < 10% | GPU vs CPU split should keep them independent | measure in N5 |
 
 If N0 measures RTF > 0.5 on this CPU, try int8 and different onnxruntime thread counts,
 and record each result. If RTF > 1.0 even then, stop and ask the user before building
@@ -264,7 +277,7 @@ the UI. Moving Kokoro to the GPU is not a fallback (§5.1).
 
 | # | Increment | Changes | Tests added | Done when |
 |---|---|---|---|---|
-| **N0** | **Spike: measure Kokoro on this PC** (no app code) | `kokoro-onnx==0.6.1` → `app/requirements.txt`; model files → `models/kokoro/`; `tools/tts_bench.py` (load time, RTF, first-sentence latency; fp32 vs int8; thread counts; CPU only); `.gitignore` comment for `/models/` | none (bench script) | Numbers in `performance.md`, ADR 0001 → Accepted or Rejected, default model variant chosen. Confirms: espeak works offline, voice list, `hi`/`es`/`fr` voices produce speech |
+| **N0** | **Spike: measure Kokoro on this PC** (no app code) | `kokoro-onnx>=0.6.1,<0.7` → `app/requirements.txt` (measured: 0.6.1 with onnxruntime 1.30.0); model files → `models/kokoro/`; `tools/tts_bench.py` (load time, RTF, first-sentence latency; fp32 vs int8; thread counts; CPU only); `.gitignore` comment for `/models/` | none (bench script) | Numbers in `performance.md`, ADR 0001 → Accepted or Rejected, default model variant chosen. Confirms: espeak works offline, voice list, `hi`/`es`/`fr` voices produce speech |
 | **N1** | **Split layout** (refactor, no behavior change) | `app.py`: STT widgets move into a left frame of a `PanedWindow`; the right pane is a placeholder "Text to speech (coming soon)"; window size; per-pane status line | none new; the 26 baseline tests must still pass | T-UI-1 manual checklist passes |
 | **N2** | **Narration box + Save/Clear/Copy all** (no audio yet) | `app.py`: editable text box, the three buttons, `Ctrl+A`; Speak button present but disabled | none (pure UI). Manual T-UI-2 | Box works on its own, STT box untouched |
 | **N3** | **`tts.py` engine leaf** | `load`, `voices`, `lang_for_voice`, `split_sentences`, `synthesize` | `test_tts_split.py` (≈12 cases: abbreviations, decimals, `…`, `।`, blank lines, long piece re-split, round trip, empty); `test_tts_voices.py` (`lang_for_voice` table); `test_tts_engine.py` (**slow**, skipped with a reason when `models/kokoro/` is missing: "Hello world." → float32, 24 kHz, 0.4–3 s) | tests pass; architecture test lists `tts` |
@@ -284,7 +297,7 @@ After N7: update `current-state.md` (what a user can do), `architecture-overview
 | 1 | Edit the box while it is speaking? | Snapshot (rule 3.3.1) · lock the box while speaking | Snapshot: you can prepare the next text while it speaks |
 | 2 | Real mic plus narration in the same call | document the Windows/VoiceMeeter workaround (v1) · build N8 | v1 documents it; decide on N8 after using v1 |
 | 3 | GPL-3 deps (`phonemizer`, espeak-ng) | accept (personal or local use) · look for a non-GPL G2P | Accept unless you plan to distribute Wisper |
-| 4 | Default model variant | fp32 (~300 MB) · int8 (~80 MB) | Decide from N0 numbers (speed and how it sounds) |
+| 4 | ~~Default model variant~~ | **Resolved by N0: fp32.** int8 is ~10× slower on this CPU | — |
 
 ## 10. Future (not in this spec)
 
