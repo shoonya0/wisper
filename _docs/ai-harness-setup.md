@@ -8,7 +8,7 @@ DONE or SKIPPED.
 |---|---|
 | Started | 2026-10-07 |
 | Target | `D:\projects\wisper` |
-| Playbook | `D:\projects\wisper\stepsForCreatingApp` |
+| Playbook | `D:\projects\wisper\stepsForCreatingApp` (removed from Wisper 2026-10-07; its edits were merged into `D:\projects\stepsForCreatingApp`) |
 | OS / shell | `win32` (x64, Windows 11) / Bash (Git Bash) |
 | Mode | EXISTING+AI (merge: keep `.claude/skills/optimized-app-research`) |
 | Stack | Python 3.14 (Tkinter, ctypes → whisper.dll); whisper.cpp (C/C++, Vulkan) is an upstream clone, not project code |

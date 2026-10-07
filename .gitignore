@@ -24,9 +24,8 @@ Thumbs.db
 # Kokoro TTS model files (models/kokoro/, ~353 MB; see _docs/current-state.md to download)
 /models/
 
-# Not project code: upstream whisper.cpp clone (see _docs/current-state.md to rebuild) and the setup playbook
+# Not project code: upstream whisper.cpp clone (see _docs/current-state.md to rebuild)
 /whisper.cpp/
-/stepsForCreatingApp/
 
 # AI harness: local state
 .code-review-graph/
