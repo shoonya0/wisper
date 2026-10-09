@@ -31,21 +31,3 @@ def decode_to_16k_mono(path):
             f"Can't decode {path.name}: supported formats are WAV, MP3, FLAC, OGG (Vorbis)") from e
     return np.asarray(decoded.samples, dtype=np.float32)
 
-
-def split_windows(audio, window_s=25.0, overlap_s=1.0):
-    """Yield (start_sample, chunk) windows for long audio.
-
-    Whisper's context is 30 s; 25 s windows with 1 s overlap keep each pass
-    within that and avoid clipping words at the boundary. The caller trims the
-    overlap when stitching text.
-    """
-    n = len(audio)
-    win = int(window_s * TARGET_SR)
-    hop = int((window_s - overlap_s) * TARGET_SR)
-    if n <= win:
-        yield 0, audio
-        return
-    start = 0
-    while start < n:
-        yield start, audio[start:start + win]
-        start += hop

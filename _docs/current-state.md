@@ -12,7 +12,7 @@ Claims are marked **VERIFIED** (run or read in code) or **ASSUMED**.
 | Engine build | ✅ present (VERIFIED) | `whisper.cpp/build/bin/Release/whisper.dll` + `ggml-vulkan.dll`, `GGML_VULKAN=1` in CMakeCache |
 | Models | ✅ present (VERIFIED) | base.en-q5_1, small.en-q5_1, large-v3-turbo-q5_0 in `whisper.cpp/models/` |
 | Narration (TTS) | 🚧 N0 spike + N1 layout done, no narration yet | Kokoro-82M fp32 on the CPU: RTF 0.36–0.40 with 4 threads ([performance.md](./performance.md)); model in `models/kokoro/` |
-| Tests | ✅ 29 tests (characterization, architecture, window layout) | baseline below |
+| Tests | ✅ 37 tests (characterization, architecture, window layout, file stitching) | baseline below |
 | AI harness | ✅ set up; CI runs on GitHub (guard-hook live probe pending) | [`ai-harness-setup.md`](./ai-harness-setup.md) |
 
 ## What a user can do today
@@ -57,11 +57,11 @@ Claims are marked **VERIFIED** (run or read in code) or **ASSUMED**.
 - **Fast check:** `node tools/verify.mjs` (ruff check → pyright → pytest, ~6 s). **Full:** `node tools/verify.mjs --full` (same today; slow GPU checks go there).
 - **Tests only:** `app\.venv\Scripts\python.exe -m pytest` (config in root `pyproject.toml`).
 
-## Test baseline (at N1)
+## Test baseline (after the file-overlap fix)
 
 | Suite | Result | Known failures (by name) |
 |---|---|---|
-| pytest (`app/tests/`, 29 tests: architecture, audio_io, capture segmenter, hallucination filter, window layout) | 29/29 pass (2.5 s) | none |
+| pytest (`app/tests/`, 37 tests: architecture, audio_io, capture segmenter, file stitching, hallucination filter, window layout) | 37/37 pass (2.4 s) | none |
 | ruff check | 0 findings (after `a1dc6b3` sorted imports) | — |
 | pyright (basic) | 0 errors (`live_transcriber.py` excluded, open decision 1) | — |
 
@@ -77,10 +77,15 @@ Compare new runs against this list **by test name**.
 
 ## Known issues and risks
 
-1. **File mode repeats words at window boundaries** (VERIFIED by reading code).
-   `audio_io.split_windows` overlaps windows by 1 s and its docstring says "the caller
-   trims the overlap", but `App._transcribe_file` (`app/app.py:441`) appends every
-   window's full text.
+1. ~~**File mode repeats words at window boundaries**~~ FIXED (2026-10-09): File mode
+   now makes one `whisper_full` call on the whole file (`Whisper.transcribe_long`), so
+   whisper.cpp seeks by its own timestamps and streams segments through a callback.
+   Trimming the 1 s overlap of fixed 25 s windows by timestamps didn't work: Whisper
+   invents words for the speech cut off at each window's end. Segments with more than
+   60 characters per second are dropped (`is_too_dense`): long-form turbo invented a
+   whole sentence in the last 0.62 s of a file. GPU check: jfk.wav ×6 (66 s) gives
+   exactly 135 words with base.en, small.en and large-v3-turbo (the old code gave
+   140 / 141 / 133). `audio_io.split_windows` was removed with its 4 tests (user, 2026-10-09).
 2. ~~**`.m4a` is offered but can't be decoded**~~ FIXED (2026-10-07): `.m4a` removed
    from `AUDIO_EXTS`; undecodable files now raise a `ValueError` naming the supported
    formats instead of miniaudio's bare `('failed to decode file', -1)`. AAC support
@@ -118,5 +123,4 @@ Compare new runs against this list **by test name**.
   first chunk in 0.73–0.84 s; ADR Accepted; the user listened to all 7 language
   samples (2026-10-09): all acceptable, `af_heart` (en-us) the best. **N1 (split window) done 2026-10-07.** **Next: N2**
   (narration box with Save… / Clear / Copy all, no audio yet).
-- Still open: fix known issue 1 (overlap trimming), with characterization tests on
-  `audio_io.split_windows` first.
+- Known issue 1 (File mode repeated words) is fixed on `fix/file-overlap` (2026-10-09).

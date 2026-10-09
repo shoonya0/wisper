@@ -11,7 +11,7 @@ inlining them.
  mic / loopback ──►  capture.Capture ──on_chunk──►  jobs Queue  ──►  worker thread  ──►  results Queue ──► _poll() (every 100 ms) ──► transcript
  (pyaudiowpatch)     RMS gate → 16 kHz chunks         ("audio",…)     owns the ONE        ("text"|"ready"|…)
                                                        ("file",…)     Whisper model
- audio file ──────►  audio_io.decode_to_16k_mono ─ split_windows (25 s / 1 s overlap) ─┘        │
+ audio file ──────►  audio_io.decode_to_16k_mono ─ whole file, one long-form pass ─────┘        │
                                                                                          whisper_native.Whisper
                                                                                          ctypes → whisper.dll (Vulkan, GPU)
 ```
@@ -22,7 +22,7 @@ inlining them.
 |---|---|---|---|
 | UI + orchestration | `app/app.py` | 3-mode Tkinter app, model picker, job/result queues, worker loop | Yes: UI state, transcript, the loaded model (worker thread only) |
 | Capture | `app/capture.py` | List mic/loopback devices; record; energy-gate segmentation into 16 kHz mono chunks; `DICTATION` / `CAPTIONS` profiles | Per-session capture thread + block queue |
-| File decode | `app/audio_io.py` | Decode WAV/MP3/FLAC/OGG to 16 kHz mono via miniaudio; 25 s windows with 1 s overlap | No |
+| File decode | `app/audio_io.py` | Decode WAV/MP3/FLAC/OGG to 16 kHz mono via miniaudio | No |
 | Engine binding | `app/whisper_native.py` | ctypes binding to `whisper.dll`; load the model once (GPU-resident); `transcribe()` | The whisper context (not thread safe) |
 | Platform | `app/priority.py` | Windows-only: raise process/thread/GPU scheduling priority, turn off EcoQoS throttling. Best effort, never raises | No |
 | Legacy | `app/live_transcriber.py` | Older standalone loopback-only transcriber (large-v3-turbo). Duplicates capture logic. Not imported by `app.py`, `run.bat` or docs | Its own copy of everything |
@@ -45,18 +45,20 @@ independent leaves: each depends only on third-party libraries or the stdlib.
 
 ## Main flows
 
-1. **Model load**: `App._request_model` (`app/app.py:295`) → `jobs.put(("model", path))`
-   → `_worker_loop` (`app/app.py:384`) closes the old model, creates `Whisper(DLL_DIR, path)`,
+1. **Model load**: `App._request_model` (`app/app.py:331`) → `jobs.put(("model", path))`
+   → `_worker_loop` (`app/app.py:420`) closes the old model, creates `Whisper(DLL_DIR, path)`,
    runs a 1 s silent warm-up, then posts `("ready", None)`.
    English-only models pin the language to `en` and lock the language box.
-2. **Dictation / live captions**: `toggle` (`app/app.py:312`) starts `capture.Capture`
+2. **Dictation / live captions**: `toggle` (`app/app.py:348`) starts `capture.Capture`
    with the mode's `Profile` → `_segment_loop` (`app/capture.py:135`) cuts chunks at
    pauses (RMS < 0.006) → `_on_audio_chunk` queues `("audio", chunk, last 200 chars)`
    (the prompt gives context) → the worker transcribes, drops `is_junk` text, then posts
    `("text", …)`.
-3. **File**: `start_file` → `("file", path)` → `_transcribe_file` (`app/app.py:433`)
-   decodes, transcribes each 25 s window, and streams text plus progress %.
-4. **UI loop**: `_poll` (`app/app.py:471`) drains `results` every 100 ms, appends text,
+3. **File**: `start_file` → `("file", path)` → `_transcribe_file` (`app/app.py:469`)
+   decodes, then `Whisper.transcribe_long` runs one `whisper_full` on the whole file.
+   whisper.cpp's segment and progress callbacks run on the worker thread and post
+   `("text", …)` and `("progress", %)`; overly dense segments (hallucinations) are dropped.
+4. **UI loop**: `_poll` (`app/app.py:510`) drains `results` every 100 ms, appends text,
    and updates the status line and level meter.
 
 ## Threading and state
@@ -87,9 +89,12 @@ independent leaves: each depends only on third-party libraries or the stdlib.
   5 s flash). There's no log file and no console, because the app runs under `pythonw`.
 - `priority.py` swallows all failures by design.
 
-## Testing seams (none yet)
+## Testing seams
 
-- `audio_io.split_windows`, `capture.Profile` with `_segment_loop`, and `app.is_junk` are
-  pure or near-pure, so they're the first unit-test targets.
+- `capture.Profile` with `_segment_loop`, `app.is_junk` and `whisper_native.is_too_dense`
+  are pure or near-pure and unit-tested.
+- `App._transcribe_file` runs with a fake model and a stand-in `self` (no Tk, no GPU), and
+  `Whisper.transcribe_long` runs against a fake `lib` that fires the ctypes callbacks
+  (`app/tests/test_file_stitching.py`).
 - `whisper_native.Whisper` needs the DLL and the GPU. Treat it as a manual/integration
   test (`whisper.cpp/models/for-tests-*.bin` are tiny models usable for smoke tests).

@@ -471,15 +471,18 @@ class App:
         try:
             self.results.put(("status", f"Decoding {Path(path).name}…"))
             audio = audio_io.decode_to_16k_mono(path)
-            total = len(audio)
-            windows = list(audio_io.split_windows(audio))
             self.results.put(("text", f"\n\n--- {Path(path).name} ---\n"))
-            for start, chunk in windows:
-                text = model.transcribe(chunk, self.language)
+
+            def on_text(text):
+                text = text.strip()
                 if text and not is_junk(text):
                     self.results.put(("text", text + " "))
-                pct = min(100, int(100 * (start + len(chunk)) / total))
-                self.results.put(("progress", pct))
+
+            # One pass over the whole file: whisper.cpp seeks by its own timestamps, so
+            # no words are cut or repeated at window edges (known issue 1).
+            model.transcribe_long(audio, self.language, on_text,
+                                  lambda pct: self.results.put(("progress", pct)))
+            self.results.put(("progress", 100))
             self.results.put(("done", None))
         except Exception as e:
             self.results.put(("error", f"File transcription failed: {e}"))
