@@ -71,7 +71,7 @@ re-enable condition) · `BLOCKED` (with reason)
 | H15 | Optional extras | DEFERRED | `/install-github-app` needs `gh auth login` + repo admin (user); PR template; offered in handoff |
 | V1 | Restart | DONE | new session 2026-10-07; SessionStart hook printed current-state.md; gh on PATH (`gh --version` → 2.102.0) |
 | V2 | Registration checks | DONE | session lists skills verify-change/close-increment/optimized-app-research + agent code-reviewer; `claude mcp list` → code-review-graph ✔ Connected, context7 ! Needs authentication; `claude plugin list` → context7 + security-guidance enabled (project) |
-| V3 | Live probes | DONE (guard probe by user) | 1 protect: Write `probe-hook.bin` → blocked by protect-files.mjs. 2 guard: not run by agent (auto-mode classifier declined; stdin-tested in H3) → user runs `git reset --hard --dry-run-probe`, expect "Blocked by guard-shell". 3 format: SKIPPED (no formatter). 4 graph MCP: `list_graph_stats` → 85 nodes, 644 edges, head matches build. 5 `/verify-change` → rung 1 pass, 25/25 pytest. 6 Stop hook: no "Verification failed" block after turns that edited `_docs/`. 7 UI: SKIPPED (H14) |
+| V3 | Live probes | DONE | 1 protect: Write `probe-hook.bin` → blocked by protect-files.mjs. 2 guard: a `git reset` with a bogus flag → blocked by guard-shell.mjs (2026-10-09). 3 format: SKIPPED (no formatter). 4 graph MCP: `list_graph_stats` → 85 nodes, 644 edges, head matches build. 5 `/verify-change` → rung 1 pass, 25/25 pytest. 6 Stop hook: no "Verification failed" block after turns that edited `_docs/`. 7 UI: SKIPPED (H14) |
 | V4 | Context budget | DONE | CLAUDE.md 64 lines / 488 words (~0.7k tokens, under 3k). Project skills: 3 (close-increment has `disable-model-invocation: true`; verify-change and optimized-app-research have no side effects). Unused by this project, user-scope: `postman` MCP (~40 deferred tools) and `vibe-prospecting` plugin → suggest disabling for this project via `/mcp` and `/plugin` |
 | V5 | Log finalized | DONE | this file |
 | V6 | Completion report | DONE | below |
@@ -124,10 +124,9 @@ At `a1dc6b3` + harness tests:
   V3), JSON/YAML parse (H4, H11), architecture-rule probe (H9).
 - Verified live in Claude Code on Windows 11: protect hook blocks, graph MCP connected
   (85 nodes), `/verify-change` evidence table, SessionStart output, Stop hook with no pending block.
-- Not verified: guard-shell live block (user probe pending); CI on GitHub (not pushed);
-  macOS/Linux (Windows-only project, not run there).
-- Requires user action: guard probe above; push + `gh run list --workflow verify.yml`;
-  optional `/install-github-app`; context7 auth via `/mcp`.
+- Verified later (2026-10-09): guard-shell live block; CI on GitHub (PRs #1, #2 and `master`).
+- Not verified: macOS/Linux (Windows-only project, not run there).
+- Requires user action: optional `/install-github-app`; context7 auth via `/mcp`.
 
 ### Commands executed (this session)
 

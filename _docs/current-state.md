@@ -1,6 +1,6 @@
 # Wisper: current state (snapshot 2026-10-09)
 
-Snapshot taken at `1c99622` (narration N1 done) on `chore/ai-harness` (pushed; PR into `master` pending).
+Snapshot taken at `98dbbe3` on `master` (narration N1 and the File-mode fix merged).
 One page; update it when an increment lands.
 Claims are marked **VERIFIED** (run or read in code) or **ASSUMED**.
 
@@ -13,7 +13,7 @@ Claims are marked **VERIFIED** (run or read in code) or **ASSUMED**.
 | Models | ✅ present (VERIFIED) | base.en-q5_1, small.en-q5_1, large-v3-turbo-q5_0 in `whisper.cpp/models/` |
 | Narration (TTS) | 🚧 N0 spike + N1 layout done, no narration yet | Kokoro-82M fp32 on the CPU: RTF 0.36–0.40 with 4 threads ([performance.md](./performance.md)); model in `models/kokoro/` |
 | Tests | ✅ 37 tests (characterization, architecture, window layout, file stitching) | baseline below |
-| AI harness | ✅ set up; CI runs on GitHub (guard-hook live probe pending) | [`ai-harness-setup.md`](./ai-harness-setup.md) |
+| AI harness | ✅ set up; CI runs on GitHub; guard hook verified live | [`ai-harness-setup.md`](./ai-harness-setup.md) |
 
 ## What a user can do today
 
@@ -123,4 +123,4 @@ Compare new runs against this list **by test name**.
   first chunk in 0.73–0.84 s; ADR Accepted; the user listened to all 7 language
   samples (2026-10-09): all acceptable, `af_heart` (en-us) the best. **N1 (split window) done 2026-10-07.** **Next: N2**
   (narration box with Save… / Clear / Copy all, no audio yet).
-- Known issue 1 (File mode repeated words) is fixed on `fix/file-overlap` (2026-10-09).
+- Known issue 1 (File mode repeated words) is fixed and merged (PR #2, 2026-10-09).
