@@ -24,11 +24,12 @@ const python = existsSync(venvPython) ? venvPython : 'python';
 const FAST = [
   { name: 'lint', args: ['-m', 'ruff', 'check', '.'] },
   { name: 'typecheck', args: ['-m', 'pyright'] },
-  { name: 'unit + architecture tests', args: ['-m', 'pytest'] },
+  { name: 'unit + architecture tests', args: ['-m', 'pytest', '-m', 'not slow'] },
 ];
 
 // No formatter check: the code is hand-formatted (aligned tables), by choice.
 const SLOW = [
+  { name: 'slow tests (Kokoro model; skipped when missing)', args: ['-m', 'pytest', '-m', 'slow'] },
   // { name: 'GPU smoke test', args: ['-m', 'pytest', '-m', 'gpu'] },
 ];
 
