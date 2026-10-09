@@ -25,3 +25,4 @@ pythonpath = ["app"]
 # --capture=sys, not the default fd capture: with fd capture, creating a Tk window
 # (test_window_layout.py) failed to read tk.tcl in 6 of 20 runs; with sys capture, 0 of 20.
 addopts = "-q --capture=sys"
+markers = ["slow: needs model files and takes seconds; run by `node tools/verify.mjs --full`"]

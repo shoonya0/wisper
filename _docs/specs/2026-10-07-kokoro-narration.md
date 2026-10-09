@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | In progress: N0 (spike) and N1 (split window) done 2026-10-07, N2 (narration box) done 2026-10-09, next N3 |
+| Status | In progress: N0 (spike) and N1 (split window) done 2026-10-07, N2 (narration box) and N3 (`tts.py`) done 2026-10-09, next N4 |
 | Date | 2026-10-07 |
 | Owner | shoonya0 |
 | Test plan | [`_docs/test/kokoro-narration.md`](../test/kokoro-narration.md) |
@@ -169,7 +169,7 @@ Full reasoning is in ADR 0001. In short:
 
 | Module | Responsibility | Pure / testable parts |
 |---|---|---|
-| `app/tts.py` (new) | Load Kokoro once; list voices; `lang_for_voice()`; `split_sentences()`; `synthesize(sentence, voice, speed) -> float32 @ 24 kHz` | `split_sentences`, `lang_for_voice` |
+| `app/tts.py` (new) | `load()` Kokoro once → an `Engine` with `voices()` and `synthesize(sentence, voice, speed) -> float32 @ 24 kHz` (N3: a class, so the one ONNX session has one owner); `lang_for_voice()`; `split_sentences()` | `split_sentences`, `lang_for_voice` |
 | `app/playback.py` (new) | List WASAPI output devices; detect virtual cables by name; `targets_for(mode, me, others)`; resample 24 kHz → device rate; `Player`: writes the same samples to 1–2 output streams in ~50 ms blocks, checking a stop `Event` between blocks | `targets_for`, `find_virtual_cable`, `resample_to`, `Player` with an injected stream factory |
 | `app/narrator.py` (new) | Narration pipeline, with no Tk or device code: takes `synthesize` and `play` callables (dependency injection). Splits, prefetches one sentence ahead, plays in order, `stop()`, a generation id so late results are thrown away, and progress or done callbacks | All of it, with fakes |
 | `app/app.py` (changed) | Two panes; the TTS pane widgets; owns the **TTS worker thread** (the only thread that touches the Kokoro session) and wires narrator ↔ tts ↔ playback ↔ UI through a queue, the same way the STT side does | UI: manual |
