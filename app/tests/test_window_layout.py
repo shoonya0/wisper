@@ -1,7 +1,7 @@
 """Window layout: speech to text on the left, text to speech on the right, nothing cut off.
 
-Builds the real Tk window with a fake Whisper model and a fake PyAudio, so no GPU or
-audio device is needed. Narration spec §3.1 and test plan T-UI-1.
+Builds the real Tk window with fakes (the `window` fixture in conftest.py), so no GPU,
+model or audio device is needed. Narration spec §3.1 and test plan T-UI-1.
 """
 
 import tkinter as tk
@@ -9,48 +9,6 @@ import tkinter as tk
 import pytest
 
 import app
-
-
-class FakeWhisper:
-    def __init__(self, dll_dir, model_path):
-        pass
-
-    def transcribe(self, audio, language, prompt=""):
-        return ""
-
-    def close(self):
-        pass
-
-
-class FakePyAudio:
-    def terminate(self):
-        pass
-
-
-@pytest.fixture
-def window(monkeypatch):
-    monkeypatch.setattr(app, "Whisper", FakeWhisper)
-    monkeypatch.setattr(app.capture.pyaudio, "PyAudio", FakePyAudio)
-    monkeypatch.setattr(app.capture, "list_sources", lambda pa, kind: [])
-    # No skip on TclError: Wisper is Windows-only, where Tk always has a display, and a
-    # skip here once hid a flaky Tcl start-up (see --capture=sys in pyproject.toml).
-    root = tk.Tk()
-    # Invisible but still mapped, so geometry can be measured: these tests run on every
-    # verify (Stop hook, pre-commit) and must not flash windows on the user's desktop.
-    root.attributes("-alpha", 0.0)
-    root.attributes("-toolwindow", True)
-    win = app.App(root)
-    root.update()
-    yield win
-    # Cancel pending after() timers (_poll): destroy() leaves them in Tcl's notifier and the
-    # next test's update() would fire them ("invalid command name ..._poll").
-    for after_id in root.tk.splitlist(root.tk.call("after", "info")):
-        root.after_cancel(after_id)
-    win.on_close()
-    # Wait for the worker before monkeypatch restores the real Whisper: a worker that
-    # hasn't taken its "model" job yet would otherwise load the real GPU model.
-    win.worker.join(timeout=5)
-    assert not win.worker.is_alive(), "worker thread didn't stop after on_close()"
 
 
 def panes_of(win):
@@ -119,7 +77,7 @@ def test_narration_box_is_editable_and_speak_is_disabled(window):
         assert is_descendant(w, tts), f"{w} should be in the right (text to speech) pane"
     window.tts_text.insert("end", HINDI)  # the user types or pastes here
     assert window.tts_text.get("1.0", "end-1c") == HINDI
-    assert window.speak_btn.instate(["disabled"]), "Speak must stay disabled until N5 wires the engine"
+    assert window.speak_btn.instate(["disabled"]), "Speak must stay disabled while the Kokoro files are missing"
 
 
 def test_ctrl_a_selects_all_in_the_narration_box(window):
@@ -183,6 +141,6 @@ def test_every_tts_control_visible_at_minimum_window_size(window):
     _, tts = panes_of(window)
     buttons = [b for f in tts.winfo_children() for b in f.winfo_children() if b.winfo_class() == "TButton"]
     assert len(buttons) == 4, "Speak, Save…, Clear, Copy all"
-    controls = [window.tts_text, *buttons]
+    controls = [window.tts_text, window.voice_box, window.speed_box, *buttons]
     cut = [str(w) for w in controls if not inside(w, tts)]
     assert not cut, f"cut off at the minimum size {width}x{height}: {cut}"

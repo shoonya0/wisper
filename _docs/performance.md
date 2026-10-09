@@ -137,5 +137,20 @@ the best, so it stays the default voice.** **Offline:** every run
 above with `--offline` had all Python socket calls blocked, and espeak-ng loads from the
 venv (`espeakng_loader\espeak-ng.dll`).
 
-Not measured yet (N5): Kokoro and Whisper dictation running at the same time, plus
-first sound and stop latency in the real app.
+### Narration pipeline (N5, 2026-10-09)
+
+Real Kokoro (fp32, 4 threads) + `Narrator` + `Player`, output to a **silent fake stream**
+that records when blocks arrive (nothing played). Text: the 16-word first sentence
+above plus two more. 5 runs, idle CPU.
+
+| Metric | Result | Target |
+|---|---|---|
+| Load + warm-up ("Ready.") at app start | 1.42–1.59 s + 0.52–0.54 s, in the background | ≤ 5 s |
+| Speak → first audio block (first piece "Hi everyone,") | 0.45–0.49 s, median 0.48 s | ≤ 1.0 s p50 |
+| Stop → last block finished | 12–34 ms | ≤ 200 ms |
+| Stop → worker free again (`speak()` returns) | 0.45–0.53 s: the piece being synthesized finishes, then is dropped | — (bounded by `MAX_CHARS`) |
+| Real `PaStream` on the speakers (N4, silence) | `play()` returns 34 ms after `stop()` | — |
+
+The device's own output buffer comes on top of "first block" and "last block" (not
+measured; WASAPI shared mode is typically 10–30 ms). Not measured yet: Kokoro and
+Whisper dictation at the same time (T-TTS-5, manual).

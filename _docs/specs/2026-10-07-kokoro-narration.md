@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | In progress: N0 (spike) and N1 (split window) done 2026-10-07, N2 (narration box), N3 (`tts.py`) and N4 (`playback.py`) done 2026-10-09, next N5 |
+| Status | In progress: N0 (spike) and N1 (split window) done 2026-10-07, N2 (narration box), N3 (`tts.py`), N4 (`playback.py`) done 2026-10-09; N5 (narrator + wiring, "Only me") code done 2026-10-09, manual T-TTS-1…5 pending |
 | Date | 2026-10-07 |
 | Owner | shoonya0 |
 | Test plan | [`_docs/test/kokoro-narration.md`](../test/kokoro-narration.md) |
@@ -76,7 +76,7 @@ or to both.
 
 | Control | Behavior |
 |---|---|
-| **Speak / Stop** button (accent) | Speak: reads the whole box from the start. While speaking, the label changes to "⏹ Stop". Disabled while the Kokoro model is loading or missing, or when the box is empty |
+| **Speak / Stop** button (accent) | Speak: reads the whole box from the start. While speaking, the label changes to "⏹ Stop". Disabled while the Kokoro model is loading or missing. An empty box: rule 3.3.7 |
 | Voice | Kokoro voices from `voices-v1.0.bin`, grouped by language prefix (`af_`/`am_` = US English, `bf_`/`bm_` = UK English, `e`, `f`, `h`, `i`, `p`). Default `af_heart` (VERIFIED present among the 54 voices; how it sounds is checked in T-TTS-1). The language passed to Kokoro is derived from the voice prefix |
 | Speed | 0.8 / 0.9 / 1.0 / 1.1 / 1.25 / 1.5. Default 1.0 |
 | Output | Radio buttons: Only me · Only others · Both |
@@ -253,11 +253,11 @@ Stop/Clear (UI thread): narrator.stop() → sets stop Event + gen += 1 → Playe
 | Metric | Target | Why | N0 result (fp32, 4 threads) |
 |---|---|---|---|
 | Kokoro load (cold) | ≤ 5 s, done in the background at app start | the app must open instantly; STT must not wait | ✅ 1.3–1.5 s load + ~2.0 s warm-up |
-| First sound after Speak | **≤ 1.0 s** p50, ≤ 1.5 s p95 | feels immediate in a call | ✅ 0.73–0.84 s p50, max 0.91 s, with the 6-word first-chunk cap (❌ 1.80 s without). ⚠ 1.33 s under CPU contention, so re-measure with Dictation running in N5 |
+| First sound after Speak | **≤ 1.0 s** p50, ≤ 1.5 s p95 | feels immediate in a call | ✅ 0.73–0.84 s p50, max 0.91 s, with the 6-word first-chunk cap (❌ 1.80 s without). ⚠ 1.33 s under CPU contention. **N5 (pipeline, silent stream, idle CPU): 0.45–0.49 s**; with Dictation running: T-TTS-5 (manual) |
 | Real-time factor on CPU (synthesis time ÷ audio time) | **≤ 0.5** (2× faster than real time) | prefetching then always stays ahead, so there are no gaps between sentences | ✅ 0.36–0.40 |
-| Stop/Clear → silence | **≤ 200 ms** on all devices | requirement 5 | measure in N5 |
-| Gap between sentences | ≤ 300 ms of silence beyond Kokoro's own pause | sounds natural | measure in N5 |
-| STT impact while narrating | dictation RTF changes by < 10% | GPU vs CPU split should keep them independent | measure in N5 |
+| Stop/Clear → silence | **≤ 200 ms** on all devices | requirement 5 | **N5: last block ≤ 34 ms after stop** (silent stream) + the device buffer; by ear: T-TTS-3 |
+| Gap between sentences | ≤ 300 ms of silence beyond Kokoro's own pause | sounds natural | by ear in T-TTS-1 (prefetch one ahead, RTF 0.4: synthesis stays ahead) |
+| STT impact while narrating | dictation RTF changes by < 10% | GPU vs CPU split should keep them independent | T-TTS-5 (manual, N5) |
 
 If N0 measures RTF > 0.5 on this CPU, try int8 and different onnxruntime thread counts,
 and record each result. If RTF > 1.0 even then, stop and ask the user before building

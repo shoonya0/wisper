@@ -1,6 +1,6 @@
 # Wisper: current state (snapshot 2026-10-09)
 
-Snapshot taken at `98dbbe3` on `master` (narration N1 and the File-mode fix merged).
+Snapshot taken at `7ef8117` on `master` (narration N0–N4 merged: PRs #1, #3, #4, #5; File-mode fix PR #2).
 One page; update it when an increment lands.
 Claims are marked **VERIFIED** (run or read in code) or **ASSUMED**.
 
@@ -8,11 +8,11 @@ Claims are marked **VERIFIED** (run or read in code) or **ASSUMED**.
 
 | Area | State | Notes |
 |---|---|---|
-| App (3 modes) | ✅ working (ASSUMED: the author's use, not run during setup) | `app/app.py`. Since N1 the window is split: STT on the left, TTS on the right (N2: an editable narration box with Save… / Clear / Copy all; Speak disabled until N5). The app starts and loads a model on the GPU (VERIFIED by screenshot, N1) |
+| App (3 modes) | ✅ working (ASSUMED: the author's use, not run during setup) | `app/app.py`. Since N1 the window is split: STT on the left, TTS on the right (narration box with Save… / Clear / Copy all, Speak/Stop, voice and speed since N5). The app starts and loads a model on the GPU (VERIFIED by screenshot, N1) |
 | Engine build | ✅ present (VERIFIED) | `whisper.cpp/build/bin/Release/whisper.dll` + `ggml-vulkan.dll`, `GGML_VULKAN=1` in CMakeCache |
 | Models | ✅ present (VERIFIED) | base.en-q5_1, small.en-q5_1, large-v3-turbo-q5_0 in `whisper.cpp/models/` |
-| Narration (TTS) | 🚧 N0 spike + N1 layout + N2 narration box + N3 `tts.py` engine + N4 `playback.py` done, no audio in the UI yet | Kokoro-82M fp32 on the CPU: RTF 0.36–0.40 with 4 threads ([performance.md](./performance.md)); model in `models/kokoro/` |
-| Tests | ✅ 113 fast + 2 slow tests (characterization, architecture, window layout + narration box, file stitching, TTS splitting/voices/engine, playback) | baseline below |
+| Narration (TTS) | 🚧 N0–N5 done: Speak/Stop with voice and speed, mode "Only me"; N6 (into a call) next | Kokoro-82M fp32 on the CPU: RTF 0.36–0.40 with 4 threads ([performance.md](./performance.md)); model in `models/kokoro/` |
+| Tests | ✅ 136 fast + 2 slow tests (characterization, architecture, window layout + narration box, file stitching, TTS splitting/voices/engine, playback, narrator, narration UI) | baseline below |
 | AI harness | ✅ set up; CI runs on GitHub; guard hook verified live | [`ai-harness-setup.md`](./ai-harness-setup.md) |
 
 ## What a user can do today
@@ -22,6 +22,10 @@ Claims are marked **VERIFIED** (run or read in code) or **ASSUMED**.
   (`large-v3-turbo` default).
 - **File**: transcribe WAV/MP3/FLAC/OGG with progressive text (`large-v3-turbo` default).
 - Choose model (fastest ↔ most accurate) and language; Copy all / Save… / Clear.
+- **Narration box** (right pane): type or paste text; its own Copy all / Save… / Clear.
+- **Narration (N5, "Only me")**: Speak reads the narration box aloud on the default
+  output device with a chosen Kokoro voice and speed; Stop or Clear silences it at once.
+  "Only others" / "Both" (into a call) come in N6.
 
 ## How to build, run, test
 
@@ -57,11 +61,11 @@ Claims are marked **VERIFIED** (run or read in code) or **ASSUMED**.
 - **Fast check:** `node tools/verify.mjs` (ruff check → pyright → pytest, ~6 s). **Full:** `node tools/verify.mjs --full` (adds the `slow` pytest tests: real Kokoro model, ~4 s).
 - **Tests only:** `app\.venv\Scripts\python.exe -m pytest` (config in root `pyproject.toml`).
 
-## Test baseline (after narration N4)
+## Test baseline (after narration N5)
 
 | Suite | Result | Known failures (by name) |
 |---|---|---|
-| pytest fast (`-m "not slow"`, 113 tests: architecture, audio_io, capture segmenter, file stitching, hallucination filter, window layout + narration box, TTS split/voices, playback) | 113/113 pass (4.1 s) | none |
+| pytest fast (`-m "not slow"`, 136 tests: architecture, audio_io, capture segmenter, file stitching, hallucination filter, window layout + narration box, TTS split/voices, playback, narrator, narration UI) | 136/136 pass (8.5 s) | none |
 | pytest slow (`-m slow`, 2 tests: Kokoro voices + "Hello world." synthesis; skipped without `models/kokoro/`) | 2/2 pass (3.4 s) | none |
 | ruff check | 0 findings (after `a1dc6b3` sorted imports) | — |
 | pyright (basic) | 0 errors (`live_transcriber.py` excluded, open decision 1) | — |
@@ -122,6 +126,15 @@ Compare new runs against this list **by test name**.
   ADR: [`adr/0001-tts-engine-kokoro-onnx.md`](./adr/0001-tts-engine-kokoro-onnx.md) (Accepted).
   **N0 (spike) done 2026-10-07:** CPU only, fp32, 4 threads, RTF 0.36–0.40, a 5-word
   first chunk in 0.73–0.84 s; ADR Accepted; the user listened to all 7 language
-  samples (2026-10-09): all acceptable, `af_heart` (en-us) the best. **N1 (split window) done 2026-10-07.** **N2 (narration box with Save… / Clear / Copy all,
-  Speak disabled) done 2026-10-09.** **N3 (`tts.py` engine leaf) done 2026-10-09.** **N4 (`playback.py` leaf) done 2026-10-09.** **Next: N5** (`narrator.py` + wiring, mode "Only me": first audible narration).
+  samples (2026-10-09): all acceptable, `af_heart` (en-us) the best.
+
+  | Increment | State |
+  |---|---|
+  | N1 split window | done 2026-10-07 (PR #1) |
+  | N2 narration box, Save… / Clear / Copy all, Speak disabled | done 2026-10-09 (PR #3), T-UI-2 passed |
+  | N3 `tts.py` engine leaf | done 2026-10-09 (PR #4) |
+  | N4 `playback.py` leaf | done 2026-10-09 (PR #5); real-device stop → 34 ms |
+  | N5 `narrator.py` + wiring, mode "Only me" | done 2026-10-09: first sound 0.48 s, stop → silence ≤ 34 ms (silent-stream measurement); manual T-TTS-1…5 pending |
+  | N6 "Only others" / "Both" | needs VB-Audio Virtual Cable: **not installed** on this PC (VERIFIED 2026-10-09) |
+  | N7 polish | — |
 - Known issue 1 (File mode repeated words) is fixed and merged (PR #2, 2026-10-09).
