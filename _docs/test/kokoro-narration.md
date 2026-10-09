@@ -16,7 +16,7 @@ Fast check after every step: `node tools/verify.mjs`. Single file:
 | `test_tts_split.py` | N3 | no | see §1.1 |
 | `test_tts_voices.py` | N3 | no | `lang_for_voice`: `af_heart`→`en-us`, `bm_george`→`en-gb`, `ef_dora`→`es`, `ff_siwis`→`fr-fr`, `hf_alpha`→`hi`, `if_sara`→`it`, `pf_dora`→`pt-br`; an unknown prefix → `ValueError` naming the voice |
 | `test_tts_engine.py` | N3 | **model files** (marked `slow`: runs in `node tools/verify.mjs --full`, not the fast check; skipped with reason `"models/kokoro/ missing: see current-state.md"` when absent, as on CI). One fast test: missing files → `FileNotFoundError` with the setup message | load; `voices()` non-empty and contains the default voice; `synthesize("Hello world.")` → `float32`, 1-D, 24 kHz, duration 0.4–3 s, peak in (0.01, 1.0] |
-| `test_playback.py` | N4, N6, N7 | no (fake streams) | see §1.2 |
+| `test_playback.py` | N4, N6, N7 | no (fake streams, fake PyAudio) | see §1.2. N4 also covers: `list_outputs` (WASAPI outputs only, no loopback, default first), each device gets audio at its own rate (48 k / 44.1 k), streams stay open between sentences, an open error reports the device and closes streams already open, play after stop does nothing until the next `start` |
 | `test_narrator.py` | N5, N7 | no (fake synth/play) | see §1.3 |
 
 ### 1.1 `split_sentences`
