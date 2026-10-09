@@ -45,20 +45,20 @@ independent leaves: each depends only on third-party libraries or the stdlib.
 
 ## Main flows
 
-1. **Model load**: `App._request_model` (`app/app.py:331`) → `jobs.put(("model", path))`
-   → `_worker_loop` (`app/app.py:420`) closes the old model, creates `Whisper(DLL_DIR, path)`,
+1. **Model load**: `App._request_model` (`app/app.py:350`) → `jobs.put(("model", path))`
+   → `_worker_loop` (`app/app.py:460`) closes the old model, creates `Whisper(DLL_DIR, path)`,
    runs a 1 s silent warm-up, then posts `("ready", None)`.
    English-only models pin the language to `en` and lock the language box.
-2. **Dictation / live captions**: `toggle` (`app/app.py:348`) starts `capture.Capture`
+2. **Dictation / live captions**: `toggle` (`app/app.py:367`) starts `capture.Capture`
    with the mode's `Profile` → `_segment_loop` (`app/capture.py:135`) cuts chunks at
    pauses (RMS < 0.006) → `_on_audio_chunk` queues `("audio", chunk, last 200 chars)`
    (the prompt gives context) → the worker transcribes, drops `is_junk` text, then posts
    `("text", …)`.
-3. **File**: `start_file` → `("file", path)` → `_transcribe_file` (`app/app.py:469`)
+3. **File**: `start_file` → `("file", path)` → `_transcribe_file` (`app/app.py:509`)
    decodes, then `Whisper.transcribe_long` runs one `whisper_full` on the whole file.
    whisper.cpp's segment and progress callbacks run on the worker thread and post
    `("text", …)` and `("progress", %)`; overly dense segments (hallucinations) are dropped.
-4. **UI loop**: `_poll` (`app/app.py:510`) drains `results` every 100 ms, appends text,
+4. **UI loop**: `_poll` (`app/app.py:550`) drains `results` every 100 ms, appends text,
    and updates the status line and level meter.
 
 ## Threading and state
