@@ -1,0 +1,27 @@
+# Tool configuration only. Wisper isn't packaged; the app runs from app/ (see _docs/).
+
+[tool.ruff]
+src = ["app"]
+target-version = "py312"
+line-length = 120
+extend-exclude = ["whisper.cpp"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+
+[tool.pyright]
+include = ["app"]
+exclude = ["app/.venv", "**/__pycache__", "app/live_transcriber.py"]  # legacy: _docs/current-state.md open decision 1
+extraPaths = ["app"]
+pythonVersion = "3.12"
+pythonPlatform = "Windows"
+venvPath = "app"
+venv = ".venv"
+typeCheckingMode = "basic"
+
+[tool.pytest.ini_options]
+testpaths = ["app/tests"]
+pythonpath = ["app"]
+# --capture=sys, not the default fd capture: with fd capture, creating a Tk window
+# (test_window_layout.py) failed to read tk.tcl in 6 of 20 runs; with sys capture, 0 of 20.
+addopts = "-q --capture=sys"

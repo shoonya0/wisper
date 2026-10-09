@@ -7,23 +7,28 @@ point whisper-cli at them.
 
 from pathlib import Path
 
-import numpy as np
 import miniaudio
+import numpy as np
 
 TARGET_SR = 16000
 
-AUDIO_EXTS = {".wav", ".mp3", ".flac", ".ogg", ".m4a"}
+# Only what miniaudio can decode: it has no AAC decoder, so no .m4a/.aac.
+AUDIO_EXTS = {".wav", ".mp3", ".flac", ".ogg"}
 
 
 def decode_to_16k_mono(path):
     """Return a float32 numpy array of the file resampled to 16 kHz mono."""
     path = Path(path)
-    decoded = miniaudio.decode_file(
-        str(path),
-        output_format=miniaudio.SampleFormat.FLOAT32,
-        nchannels=1,
-        sample_rate=TARGET_SR,
-    )
+    try:
+        decoded = miniaudio.decode_file(
+            str(path),
+            output_format=miniaudio.SampleFormat.FLOAT32,
+            nchannels=1,
+            sample_rate=TARGET_SR,
+        )
+    except miniaudio.DecodeError as e:
+        raise ValueError(
+            f"Can't decode {path.name}: supported formats are WAV, MP3, FLAC, OGG (Vorbis)") from e
     return np.asarray(decoded.samples, dtype=np.float32)
 
 

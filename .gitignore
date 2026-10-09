@@ -19,5 +19,20 @@ Thumbs.db
 # Empty scaffold dirs (superseded by app/ and whisper.cpp/)
 /src/
 /scripts/
-/models/
 /audio_out/
+
+# Kokoro TTS model files (models/kokoro/, ~353 MB; see _docs/current-state.md to download)
+/models/
+
+# Not project code: upstream whisper.cpp clone (see _docs/current-state.md to rebuild)
+/whisper.cpp/
+
+# AI harness: local state
+.code-review-graph/
+agent-browser.json
+.agent/
+.claude/settings.local.json
+CLAUDE.local.md
+.scaffold-tmp/
+.pytest_cache/
+.ruff_cache/

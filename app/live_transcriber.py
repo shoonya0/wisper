@@ -8,8 +8,8 @@ chunks at pauses in speech, and transcribes each chunk with whisper.cpp
 import queue
 import threading
 import time
-from pathlib import Path
 import tkinter as tk
+from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 
