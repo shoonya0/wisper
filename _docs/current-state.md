@@ -1,6 +1,6 @@
-# Wisper: current state (snapshot 2026-10-07)
+# Wisper: current state (snapshot 2026-10-09)
 
-Snapshot taken at `9c2d7c5` + narration N1 (split window) on `chore/ai-harness` (not pushed).
+Snapshot taken at `1c99622` (narration N1 done) on `chore/ai-harness` (pushed; PR into `master` pending).
 One page; update it when an increment lands.
 Claims are marked **VERIFIED** (run or read in code) or **ASSUMED**.
 
@@ -13,7 +13,7 @@ Claims are marked **VERIFIED** (run or read in code) or **ASSUMED**.
 | Models | ✅ present (VERIFIED) | base.en-q5_1, small.en-q5_1, large-v3-turbo-q5_0 in `whisper.cpp/models/` |
 | Narration (TTS) | 🚧 N0 spike + N1 layout done, no narration yet | Kokoro-82M fp32 on the CPU: RTF 0.36–0.40 with 4 threads ([performance.md](./performance.md)); model in `models/kokoro/` |
 | Tests | ✅ 29 tests (characterization, architecture, window layout) | baseline below |
-| AI harness | ✅ set up (guard-hook live probe and CI run pending) | [`ai-harness-setup.md`](./ai-harness-setup.md) |
+| AI harness | ✅ set up; CI runs on GitHub (guard-hook live probe pending) | [`ai-harness-setup.md`](./ai-harness-setup.md) |
 
 ## What a user can do today
 
@@ -115,8 +115,8 @@ Compare new runs against this list **by test name**.
   Test plan: [`test/kokoro-narration.md`](./test/kokoro-narration.md).
   ADR: [`adr/0001-tts-engine-kokoro-onnx.md`](./adr/0001-tts-engine-kokoro-onnx.md) (Accepted).
   **N0 (spike) done 2026-10-07:** CPU only, fp32, 4 threads, RTF 0.36–0.40, a 5-word
-  first chunk in 0.73–0.84 s; ADR Accepted (still pending: the user listens to
-  `models/kokoro/samples/`). **N1 (split window) done 2026-10-07.** **Next: N2**
+  first chunk in 0.73–0.84 s; ADR Accepted; the user listened to all 7 language
+  samples (2026-10-09): all acceptable, `af_heart` (en-us) the best. **N1 (split window) done 2026-10-07.** **Next: N2**
   (narration box with Save… / Clear / Copy all, no audio yet).
 - Still open: fix known issue 1 (overlap trimming), with characterization tests on
   `audio_io.split_windows` first.

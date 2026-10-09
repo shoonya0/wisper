@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Accepted** (2026-10-07, after spike N0). One check is still open: the user hasn't yet listened to the language samples (see the Languages row) |
+| Status | **Accepted** (2026-10-07, after spike N0; language samples checked by the user 2026-10-09) |
 | Date | 2026-10-07 |
 | Spec | [`_docs/specs/2026-10-07-kokoro-narration.md`](../specs/2026-10-07-kokoro-narration.md) |
 
@@ -51,7 +51,7 @@ move TTS to the GPU later.
 | First sound ≤ 1.0 s | ✅ with the first chunk capped at 6 words: a 5-word chunk is ready in **0.73–0.84 s** p50 (max 0.91 s). ❌ a 16-word first sentence takes 1.80 s → spec §5.2 adds the 6-word first-chunk cap. ⚠ under CPU contention the 5-word chunk rose to 1.33 s; N5 must measure it with Whisper running |
 | int8 model | ❌ **~10× slower** than fp32 on this CPU (RTF 3.25–4.54). Rejected; the default is fp32 (`kokoro-v1.0.onnx`, 325 MB) |
 | Offline | ✅ every benchmark run with `--offline` had all Python socket calls blocked; espeak-ng loads from the venv |
-| Languages | ⏳ en-us, en-gb, es, fr-fr, hi, it, pt-br all produce non-silent audio (peak 0.33–0.79). **Intelligibility is pending:** the user listens to `models/kokoro/samples/*.wav`. If hi, es or fr is unintelligible, that voice is dropped from the v1 voice list (the engine choice stays) |
+| Languages | ✅ en-us, en-gb, es, fr-fr, hi, it, pt-br all produce non-silent audio (peak 0.33–0.79). **Intelligibility (user, 2026-10-09):** all 7 samples in `models/kokoro/samples/` are acceptable; `en-us-af_heart` is the best. No voice is dropped from the v1 list |
 | Load time | ✅ 1.3–1.5 s session load + ~2.0 s first-call warm-up, done in the background |
 
 ## Consequences

@@ -64,7 +64,7 @@ re-enable condition) · `BLOCKED` (with reason)
 | H8 | Formatter + linter | DONE | ruff check (E,F,W,I,B,UP; width 120) → 0 findings. Formatter SKIPPED by user (keeps hand-aligned style) |
 | H9 | Architecture rules | DONE | import-linter can't handle top-level modules → `app/tests/test_architecture.py` (AST). Probe: illegal `import capture` in priority.py → fails with fix message; file restored via git |
 | H10 | Pre-commit | DONE | `.pre-commit-config.yaml` (verify + advisory graph detect-changes); `pre-commit install`; `run --all-files` → Passed |
-| H11 | CI | DONE (not pushed) | `.github/workflows/verify.yml`: windows-latest, py3.12, node 22, `verify --full`; branches [master, main]; YAML parses. After push: `gh run list --workflow verify.yml` |
+| H11 | CI | DONE | `.github/workflows/verify.yml`: windows-latest, py3.12, node 22, `verify --full`; branches [master, main]; YAML parses. First run 2026-10-09 (`workflow_dispatch` on `chore/ai-harness`, run 37918351584) → verify passed, 28 passed + 1 skipped (the minimum-window-size layout test skips on the narrower runner screen, by design) |
 | H12 | Plugins | DONE | context7 + security-guidance @claude-plugins-official, scope project, enabled=true. Cost: context7 = 1 MCP server (schemas at runtime), security-guidance = 5 hooks (no model context). pyright-lsp DEFERRED (needs global pyright-langserver) |
 | H13 | code-review-graph MCP | DONE | `install --platform claude-code --no-instructions --no-hooks --no-skills` (CLAUDE.md/.gitignore unchanged, diffed); `.mcp.json` rewritten to portable `code-review-graph serve`; `claude mcp list` → Pending approval |
 | H14 | Agent UI access | SKIPPED | Tkinter native UI: no agent UI access; 'UI verification is manual' in CLAUDE.md + verify-change |
@@ -138,4 +138,4 @@ At `a1dc6b3` + harness tests:
 
 - `live_transcriber.py` is excluded from pyright (open decision 1 in current-state.md).
 - Known issues 1–2 are pinned by TODO tests; they are the natural first tasks.
-- CI branch filter is `[master, main]`; the local base branch is `master` (nothing pushed yet).
+- CI branch filter is `[master, main]`. The base branch is `master` (user decision 2026-10-09: no `main`).

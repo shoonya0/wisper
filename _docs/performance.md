@@ -130,7 +130,8 @@ All 54 voices are in `voices-v1.0.bin`. One sample per espeak-ng language, writt
 | pf_dora | pt-br | 2.20 s | 0.83 s | 0.34 |
 
 Non-silent audio only shows that synthesis ran, not that the speech is intelligible.
-**Intelligibility: pending, the user listens to the 7 WAVs.** **Offline:** every run
+**Intelligibility (user listened, 2026-10-09): all 7 acceptable; `af_heart` (en-us) is
+the best, so it stays the default voice.** **Offline:** every run
 above with `--offline` had all Python socket calls blocked, and espeak-ng loads from the
 venv (`espeakng_loader\espeak-ng.dll`).
 
