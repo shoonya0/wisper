@@ -26,22 +26,24 @@ inlining them.
 | Engine binding | `app/whisper_native.py` | ctypes binding to `whisper.dll`; load the model once (GPU-resident); `transcribe()` | The whisper context (not thread safe) |
 | Platform | `app/priority.py` | Windows-only: raise process/thread/GPU scheduling priority, turn off EcoQoS throttling. Best effort, never raises | No |
 | Text to speech | `app/tts.py` | Narration engine (N3, not wired into the UI until N5): `load()` Kokoro-82M fp32 on the CPU (onnxruntime, 4 threads); `Engine.voices()` / `Engine.synthesize()` → float32 @ 24 kHz; pure `split_sentences()` and `lang_for_voice()` | The Kokoro ONNX session (not thread safe: TTS worker only) |
+| Narration output | `app/playback.py` | N4, not wired into the UI until N5: `list_outputs()` (WASAPI, default first), `find_virtual_cable()`, `targets_for(mode, me, others)`, `resample_to()`; `Player` writes the same audio to 1–2 output streams in 50 ms blocks, `stop()` (the only cross-thread call) silences them within a block; `PaStream` is the real PyAudio stream | Open output streams (player thread only) |
 | Legacy | `app/live_transcriber.py` | Older standalone loopback-only transcriber (large-v3-turbo). Duplicates capture logic. Not imported by `app.py`, `run.bat` or docs | Its own copy of everything |
 | Launcher | `app/run.bat` | Starts `app.py` with the venv's `pythonw.exe` | — |
 | Engine (upstream) | `whisper.cpp/` (gitignored) | ggml-org/whisper.cpp clone at `6e4ab85`, built with `-DGGML_VULKAN=1`. DLLs in `build/bin/Release/`, models in `models/` | Not our code; no `_docs/` there |
 
 ## Layers and allowed imports (target, enforced by import-linter once H9 lands)
 
-| From \ To | app | capture | audio_io | whisper_native | priority | tts | live_transcriber |
-|---|---|---|---|---|---|---|---|
-| **app** | — | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
-| **capture** | ❌ | — | ❌ | ❌ | ❌ | ❌ | ❌ |
-| **audio_io** | ❌ | ❌ | — | ❌ | ❌ | ❌ | ❌ |
-| **whisper_native** | ❌ | ❌ | ❌ | — | ❌ | ❌ | ❌ |
-| **priority** | ❌ | ❌ | ❌ | ❌ | — | ❌ | ❌ |
-| **tts** | ❌ | ❌ | ❌ | ❌ | ❌ | — | ❌ |
+| From \ To | app | capture | audio_io | whisper_native | priority | tts | playback | live_transcriber |
+|---|---|---|---|---|---|---|---|---|
+| **app** | — | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
+| **capture** | ❌ | — | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **audio_io** | ❌ | ❌ | — | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **whisper_native** | ❌ | ❌ | ❌ | — | ❌ | ❌ | ❌ | ❌ |
+| **priority** | ❌ | ❌ | ❌ | ❌ | — | ❌ | ❌ | ❌ |
+| **tts** | ❌ | ❌ | ❌ | ❌ | ❌ | — | ❌ | ❌ |
+| **playback** | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | — | ❌ |
 
-`app.py` is the only module that wires things together. The five lower modules are
+`app.py` is the only module that wires things together. The six lower modules are
 independent leaves: each depends only on third-party libraries or the stdlib.
 `live_transcriber.py` is legacy; nothing may import it.
 

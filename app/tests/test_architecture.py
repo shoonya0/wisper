@@ -1,7 +1,7 @@
 """Import boundaries from _docs/architecture-overview.md ("Layers and allowed imports").
 
 app.py is the only module that wires the others together; capture, audio_io,
-whisper_native, priority and tts are independent leaves; nothing imports the legacy
+whisper_native, priority, tts and playback are independent leaves; nothing imports the legacy
 live_transcriber.py. Each failure message says how to fix the violation.
 """
 
@@ -11,8 +11,8 @@ from pathlib import Path
 import pytest
 
 APP_DIR = Path(__file__).resolve().parent.parent
-PROJECT_MODULES = {"app", "capture", "audio_io", "whisper_native", "priority", "tts", "live_transcriber"}
-LEAVES = {"capture", "audio_io", "whisper_native", "priority", "tts"}
+PROJECT_MODULES = {"app", "capture", "audio_io", "whisper_native", "priority", "tts", "playback", "live_transcriber"}
+LEAVES = {"capture", "audio_io", "whisper_native", "priority", "tts", "playback"}
 
 ALLOWED = {
     "app": LEAVES,
@@ -20,7 +20,7 @@ ALLOWED = {
 }
 
 FIX = {
-    "app": "app.py may import only capture, audio_io, whisper_native, priority and tts. "
+    "app": "app.py may import only capture, audio_io, whisper_native, priority, tts and playback. "
     "Move the code you need out of live_transcriber.py into one of those modules.",
     "leaf": "Leaf modules must stay independent. Pass what you need in from app.py "
     "(a callback or an argument), or move the shared code into the module that owns it.",
