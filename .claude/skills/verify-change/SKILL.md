@@ -17,7 +17,7 @@ Prove the current change works. Report **evidence, not claims**.
 |---|---|---|
 | 1 Fast | `node tools/verify.mjs` (ruff check + pyright + pytest incl. architecture test) | Always |
 | 2 Engine smoke | `whisper.cpp\build\bin\Release\whisper-cli.exe -m whisper.cpp\models\ggml-base.en-q5_1.bin -f whisper.cpp\samples\jfk.wav -nt` | `whisper_native.py`, model paths, or the whisper.cpp build changed |
-| 3 Binding smoke | `app\.venv\Scripts\python.exe -c "import sys; sys.path.insert(0,'app'); import audio_io, whisper_native as w; m=w.Whisper('whisper.cpp/build/bin/Release','whisper.cpp/models/ggml-base.en-q5_1.bin'); print(m.transcribe(audio_io.decode_to_16k_mono('whisper.cpp/samples/jfk.wav'),'en'))"` | `whisper_native.py` changed (struct layouts!) |
+| 3 Binding smoke | `app\.venv\Scripts\python.exe -c "import sys; sys.path.insert(0,'app'); import os, audio_io, whisper_native as w; m=w.Whisper(os.path.abspath('whisper.cpp/build/bin/Release'),os.path.abspath('whisper.cpp/models/ggml-base.en-q5_1.bin')); print(m.transcribe(audio_io.decode_to_16k_mono('whisper.cpp/samples/jfk.wav'),'en'))"` | `whisper_native.py` changed (struct layouts!) |
 | 4 App (manual) | `cd app` then `.venv\Scripts\python.exe app.py` (console shows tracebacks; `run.bat` hides them) | Any UI, capture, or worker-loop change |
 
 Rungs 2–4 use the GPU and audio devices. Ask before the first run in a session.
