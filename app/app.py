@@ -206,13 +206,27 @@ class App:
         return stt_pane, tts_pane
 
     def _build_tts_pane(self, parent):
-        # Placeholder until narration lands (_docs/specs/2026-10-07-kokoro-narration.md, N2–N7).
+        # Narration box (spec N2). Speak stays disabled until the engine is wired in N5.
+        bar = ttk.Frame(parent, padding=8)
+        bar.pack(fill="x")
+        self.speak_btn = ttk.Button(bar, text="🔊  Speak", width=11, state="disabled",
+                                    style="Accent.TButton")
+        self.speak_btn.pack(side="left")
+
+        actions = ttk.Frame(parent, padding=(8, 6))
+        actions.pack(fill="x")
+        ttk.Button(actions, text="Copy all", command=self.tts_copy_all).pack(side="right")
+        ttk.Button(actions, text="Clear", command=self.tts_clear).pack(side="right", padx=4)
+        ttk.Button(actions, text="Save…", command=self.tts_save).pack(side="right")
+
         status = ttk.Frame(parent, padding=(8, 4))
-        status.pack(side="bottom", fill="x")
-        self.tts_status_var = tk.StringVar(value="Narration isn't available yet.")
+        status.pack(side="bottom", fill="x")    # before the box so it keeps its row
+        self.tts_status_var = tk.StringVar(value="Narration audio isn't available yet.")
         ttk.Label(status, textvariable=self.tts_status_var).pack(side="left")
-        ttk.Label(parent, text="Narration with Kokoro-82M is coming soon.",
-                  foreground=DARK["muted"]).pack(expand=True)
+
+        # Editable: the user types or pastes the text to narrate.
+        self.tts_text = self._make_text_box(parent)
+        self.tts_text.bind("<Control-a>", self._select_all)
 
     def _build_controls(self, parent):
         bar = ttk.Frame(parent, padding=8)
@@ -264,25 +278,30 @@ class App:
         ttk.Button(actions, text="Clear", command=self.clear).pack(side="right", padx=4)
         ttk.Button(actions, text="Save…", command=self.save).pack(side="right")
 
-    def _build_transcript(self, parent):
-        # Read-only for the user: starts disabled; only the app writes to it
-        # (via _write_locked). Text stays selectable so Ctrl+C / Copy still work.
-        self.text = ScrolledText(
+    @staticmethod
+    def _make_text_box(parent):
+        box = ScrolledText(
             parent, wrap="word", font=("Segoe UI", 12), padx=10, pady=10,
             bg=DARK["surface"], fg=DARK["fg"], insertbackground=DARK["fg"],
             selectbackground=DARK["sel"], selectforeground=DARK["fg"],
             borderwidth=0, highlightthickness=1,
             highlightbackground=DARK["border"], highlightcolor=DARK["border"])
-        self.text.pack(fill="both", expand=True, padx=8)
-        self.text.configure(state="disabled")
+        box.pack(fill="both", expand=True, padx=8)
         # ScrolledText's scrollbar is a classic tk.Scrollbar; tint it to match.
         try:
-            self.text.vbar.configure(
+            box.vbar.configure(
                 background=DARK["field"], troughcolor=DARK["bg"],
                 activebackground=DARK["accent"], borderwidth=0,
                 highlightthickness=0)
         except Exception:
             pass
+        return box
+
+    def _build_transcript(self, parent):
+        # Read-only for the user: starts disabled; only the app writes to it
+        # (via _write_locked). Text stays selectable so Ctrl+C / Copy still work.
+        self.text = self._make_text_box(parent)
+        self.text.configure(state="disabled")
         self.text.bind("<Control-a>", self._select_all)
         self.text.bind("<Control-c>", lambda e: self.text.event_generate("<<Copy>>"))
 
@@ -401,18 +420,39 @@ class App:
         self.last_text = ""
 
     def save(self):
+        path = self._save_text(self.text)
+        if path:
+            self.flash(f"Saved to {path}")
+
+    def tts_copy_all(self):
+        self.root.clipboard_clear()
+        self.root.clipboard_append(self.tts_text.get("1.0", "end-1c"))
+        self.tts_status_var.set("Copied narration text to clipboard.")
+
+    def tts_clear(self):
+        # N5 adds: Clear also stops any narration in progress (spec §3.3 rule 2).
+        self.tts_text.delete("1.0", "end")
+
+    def tts_save(self):
+        path = self._save_text(self.tts_text)
+        if path:
+            self.tts_status_var.set(f"Saved narration text to {path}")
+
+    @staticmethod
+    def _save_text(box):
+        """Ask for a .txt path and write box's text as UTF-8. Returns the path, or "" if cancelled."""
         path = filedialog.asksaveasfilename(defaultextension=".txt",
                                             filetypes=[("Text", "*.txt")])
         if path:
-            Path(path).write_text(self.text.get("1.0", "end-1c"), encoding="utf-8")
-            self.flash(f"Saved to {path}")
+            Path(path).write_text(box.get("1.0", "end-1c"), encoding="utf-8")
+        return path
 
     def flash(self, message, seconds=3):
         self.status_var.set(message)
         self.flash_until = time.time() + seconds
 
-    def _select_all(self, event=None):
-        self.text.tag_add("sel", "1.0", "end-1c")
+    def _select_all(self, event):
+        event.widget.tag_add("sel", "1.0", "end-1c")
         return "break"
 
     # --------------------------------------------------------------- worker
