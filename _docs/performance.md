@@ -40,7 +40,9 @@ for latency. `flash_attn` stays **off** because Polaris has no usable fp16.
 - `priority.py`: HIGH process priority, highest worker-thread priority, HIGH GPU
   scheduling class, EcoQoS throttling off. This keeps the token-by-token decode from
   stalling the GPU.
-- File mode streams 25 s windows so text appears progressively.
+- File mode runs one long-form `whisper_full` pass and streams each segment through a
+  callback, so text appears progressively. 66 s file (jfk.wav ×6), full File-mode path:
+  base.en 4.5 s (~15× RT), small.en 8.2 s (~8×), large-v3-turbo 7.0 s (~9.4×) (2026-10-09).
 
 For profiling or optimization work, use the project skill
 `.claude/skills/optimized-app-research/` (measure first, optimize what matters).

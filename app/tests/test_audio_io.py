@@ -9,31 +9,6 @@ import audio_io
 SR = audio_io.TARGET_SR
 
 
-def windows(seconds):
-    audio = np.zeros(int(seconds * SR), np.float32)
-    return [(start, len(chunk)) for start, chunk in audio_io.split_windows(audio)]
-
-
-def test_short_audio_is_one_window():
-    assert windows(10) == [(0, 10 * SR)]
-
-
-def test_exactly_one_window_length_is_not_split():
-    assert windows(25) == [(0, 25 * SR)]
-
-
-def test_long_audio_uses_25s_windows_with_24s_hop():
-    assert windows(60) == [(0, 25 * SR), (24 * SR, 25 * SR), (48 * SR, 12 * SR)]
-
-
-def test_consecutive_windows_overlap_by_one_second():
-    # TODO(known issue 1, _docs/current-state.md): the docstring says "the caller trims
-    # the overlap", but App._transcribe_file doesn't, so ~1 s of speech is transcribed
-    # twice at every boundary. Fixing it must keep this overlap and trim the text.
-    (s1, n1), (s2, _), _ = windows(60)
-    assert s1 + n1 - s2 == 1 * SR
-
-
 def test_file_picker_only_offers_formats_miniaudio_can_decode():
     # Known issue 2: .m4a used to be offered, but miniaudio has no AAC decoder.
     ext_to_format = {".wav": "WAV", ".mp3": "MP3", ".flac": "FLAC", ".ogg": "VORBIS"}
