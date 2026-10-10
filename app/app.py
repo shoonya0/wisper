@@ -56,6 +56,20 @@ SOURCE_KIND = {
 
 SPEEDS = ["0.8", "0.9", "1.0", "1.1", "1.25", "1.5"]     # narration speed (spec §3.2)
 DEVICE_ERROR = "Audio device failed"                     # TTS status only, no dialog (rule 3.3.9)
+OUTPUT_MODES = [("me", "Only me"), ("others", "Only others"), ("both", "Both")]   # playback.MODES
+DEFAULT_OUTPUT = "both"                                  # user decision, 2026-10-10
+CABLE_SETUP = (
+    "To let a call hear the narration (Only others / Both):\n\n"
+    "1. Install VB-Audio Virtual Cable (free, vb-audio.com/Cable): run the setup as "
+    "administrator, then reboot.\n"
+    "2. In Wisper, choose \"CABLE Input (VB-Audio Virtual Cable)\" as Others. Wisper picks it "
+    "by itself when it finds it at start-up.\n"
+    "3. In Discord, Zoom or Meet, choose \"CABLE Output (VB-Audio Virtual Cable)\" as the "
+    "microphone (Meet: ⋮ → Settings → Audio → Microphone; \"Default\" is your real mic). "
+    "Restart the browser if CABLE Output isn't listed.\n\n"
+    "Your real microphone then no longer reaches the call. To talk too: Windows Sound "
+    "settings → More sound settings → Recording → your microphone → Properties → Listen → "
+    "tick \"Listen to this device\" and play it through CABLE Input.")
 
 LANGUAGES = ["auto", "en", "hi", "es", "fr", "de", "ja", "zh", "ru", "pt", "it", "ko", "ar"]
 
@@ -185,6 +199,11 @@ class App:
                   foreground=[("disabled", d["muted"])],
                   arrowcolor=[("disabled", d["muted"])])
 
+        style.configure("TRadiobutton", background=d["bg"], foreground=d["fg"],
+                        indicatorbackground=d["field"], indicatorforeground=d["fg"])
+        style.map("TRadiobutton", background=[("active", d["bg"])],
+                  indicatorbackground=[("selected", d["accent"]), ("active", d["border"])])
+
         style.configure("TProgressbar", background=d["accent"],
                         troughcolor=d["field"], bordercolor=d["border"])
         style.configure("Vertical.TScrollbar", background=d["field"],
@@ -251,6 +270,8 @@ class App:
         for box in (self.voice_box, self.speed_box):
             box.bind("<<ComboboxSelected>>", lambda e: self.tts_stop())
 
+        self._build_outputs(parent)
+
         actions = ttk.Frame(parent, padding=(8, 6))
         actions.pack(fill="x")
         ttk.Button(actions, text="Copy all", command=self.tts_copy_all).pack(side="right")
@@ -265,6 +286,53 @@ class App:
         # Editable: the user types or pastes the text to narrate.
         self.tts_text = self._make_text_box(parent)
         self.tts_text.bind("<Control-a>", self._select_all)
+
+    def _build_outputs(self, parent):
+        """Output mode and the Me / Others devices (spec §3.2, §4, §5.3; N6)."""
+        modes = ttk.Frame(parent, padding=(8, 0))
+        modes.pack(fill="x")
+        ttk.Label(modes, text="Output:", width=7).pack(side="left")
+        self.output_var = tk.StringVar(value=DEFAULT_OUTPUT)
+        self.output_radios = []
+        for value, label in OUTPUT_MODES:
+            radio = ttk.Radiobutton(modes, text=label, value=value, variable=self.output_var,
+                                    command=self._on_output_change)
+            radio.pack(side="left", padx=(4, 8))
+            self.output_radios.append(radio)
+
+        # PortAudio lists devices once, at PyAudio start-up, so one lookup here is enough.
+        self.tts_outputs = playback.list_outputs(self.pa)
+        labels = [d["label"] for d in self.tts_outputs]
+        rows = {}
+        for name in ("Me:", "Others:"):
+            rows[name] = ttk.Frame(parent, padding=(8, 4, 8, 0))
+            rows[name].pack(fill="x")
+            ttk.Label(rows[name], text=name, width=7).pack(side="left")
+        self.setup_btn = ttk.Button(rows["Others:"], text="How to set up…", command=self.show_cable_setup)
+        self.setup_btn.pack(side="right")
+        self.me_box = ttk.Combobox(rows["Me:"], values=labels, state="readonly", width=20)
+        self.others_box = ttk.Combobox(rows["Others:"], values=labels, state="readonly", width=20)
+        for box in (self.me_box, self.others_box):
+            box.pack(side="left", padx=4, fill="x", expand=True)
+            box.bind("<<ComboboxSelected>>", lambda e: self.tts_stop())   # rule 3.3.5
+        if self.tts_outputs:
+            self.me_box.current(0)        # list_outputs puts the Windows default first
+        cable = playback.find_virtual_cable(self.tts_outputs)
+        if cable is not None:
+            self.others_box.current(self.tts_outputs.index(cable))
+        self._on_output_change()
+
+    def _on_output_change(self):
+        """Others is only used by Only others and Both; a mode change stops (rule 3.3.5)."""
+        self.others_box.config(state="disabled" if self.output_var.get() == "me" else "readonly")
+        self.tts_stop()
+
+    def show_cable_setup(self):
+        messagebox.showinfo("How to set up narration into a call", CABLE_SETUP)
+
+    def _chosen_output(self, box):
+        i = box.current()
+        return self.tts_outputs[i] if i >= 0 else None
 
     def _build_controls(self, parent):
         bar = ttk.Frame(parent, padding=8)
@@ -479,11 +547,15 @@ class App:
         if not text.strip():
             self.tts_status_var.set("Nothing to narrate.")
             return
-        outputs = playback.list_outputs(self.pa)
-        if not outputs:
+        me = self._chosen_output(self.me_box)
+        if me is None:
             self.tts_status_var.set("No audio output device found.")
             return
-        devices = playback.targets_for("me", outputs[0], None)   # N6 adds Others and Both
+        try:
+            devices = playback.targets_for(self.output_var.get(), me, self._chosen_output(self.others_box))
+        except ValueError as e:           # Only others / Both without an Others device (spec §5.3)
+            self.tts_status_var.set(str(e))
+            return
         self.tts_gen = self.narrator.begin()
         self.tts_jobs.put(("speak", self.tts_gen, text, self.voice_var.get(),
                            float(self.speed_var.get()), devices))
@@ -492,7 +564,7 @@ class App:
         self.tts_status_var.set("Speaking…")
 
     def tts_stop(self):
-        """Stop the narration (Stop, Clear, a voice/speed change). Safe when nothing is playing."""
+        """Stop the narration (Stop, Clear, a voice/speed/mode/device change). Safe when nothing plays."""
         if not self.speaking:
             return
         self.narrator.stop()

@@ -1,4 +1,5 @@
-"""Narration wired into the window (spec §3.2, §3.3, §5.5; N5): Speak/Stop, Clear, errors.
+"""Narration wired into the window (spec §3.2, §3.3, §4, §5.3, §5.5; N5, N6): Speak/Stop, Clear,
+output modes and devices, errors.
 
 Real Tk window and real Narrator/Player, with a fake Kokoro engine and fake output streams
 (conftest.py), so nothing is heard and no model is loaded.
@@ -6,7 +7,8 @@ Real Tk window and real Narrator/Player, with a fake Kokoro engine and fake outp
 
 import time
 
-from conftest import FakeEngine, FakeOutput, pump
+import pytest
+from conftest import CABLE, SPEAKERS, FakeEngine, FakeOutput, pump
 
 import app
 
@@ -156,3 +158,95 @@ def test_an_unexpected_worker_error_is_reported_and_the_next_speak_works(make_wi
     assert win.tts_status_var.get() == "Narration failed: boom"
     win.tts_toggle()
     pump(win, lambda: win.tts_status_var.get() == "Narration complete.")
+
+
+# ---------------------------------------------------------------- output modes (N6)
+
+def played_on():
+    """Labels of the fake outputs that received audio."""
+    return {o.name for o in FakeOutput.instances if o.blocks}
+
+
+def choose_output(win, mode):
+    win.output_var.set(mode)
+    win.output_radios[[m for m, _ in app.OUTPUT_MODES].index(mode)].invoke()
+
+
+def test_default_is_both_with_the_cable_preselected_as_others(make_window):
+    win, _ = ready(make_window)
+    assert win.output_var.get() == "both"
+    assert win.me_box.get() == SPEAKERS["label"]
+    assert win.others_box.get() == CABLE["label"]
+    assert win.others_box.instate(["!disabled"])
+
+
+def test_both_plays_the_same_narration_on_me_and_others(make_window):
+    win, _ = ready(make_window)
+    win.tts_text.insert("end", PARAGRAPH)
+    win.tts_toggle()
+    pump(win, lambda: win.tts_status_var.get() == "Narration complete.")
+    assert played_on() == {SPEAKERS["label"], CABLE["label"]}
+    blocks = {o.name: 0 for o in FakeOutput.instances}
+    for o in FakeOutput.instances:
+        blocks[o.name] += o.blocks
+    assert blocks[SPEAKERS["label"]] == blocks[CABLE["label"]] > 0
+
+
+def test_only_others_plays_on_the_cable_only(make_window):
+    win, _ = ready(make_window)
+    choose_output(win, "others")
+    win.tts_text.insert("end", PARAGRAPH)
+    win.tts_toggle()
+    pump(win, lambda: win.tts_status_var.get() == "Narration complete.")
+    assert played_on() == {CABLE["label"]}
+
+
+def test_only_me_disables_others_and_plays_on_me_only(make_window):
+    win, _ = ready(make_window)
+    choose_output(win, "me")
+    assert win.others_box.instate(["disabled"])
+    win.tts_text.insert("end", PARAGRAPH)
+    win.tts_toggle()
+    pump(win, lambda: win.tts_status_var.get() == "Narration complete.")
+    assert played_on() == {SPEAKERS["label"]}
+    choose_output(win, "both")
+    assert win.others_box.instate(["!disabled"])
+
+
+def test_without_a_cable_nothing_is_preselected_and_speak_asks_for_others(make_window):
+    win = make_window(FakeEngine(), outputs=(SPEAKERS,))
+    pump(win, lambda: win.speak_btn.instate(["!disabled"]))
+    assert win.output_var.get() == "both"
+    assert win.others_box.get() == ""
+    win.tts_text.insert("end", PARAGRAPH)
+    win.tts_toggle()
+    assert win.tts_status_var.get() == app.playback.NO_OTHERS_MESSAGE
+    assert not win.speaking and not FakeOutput.instances
+    win.others_box.current(0)                                     # the user picks a device
+    win.tts_toggle()
+    pump(win, lambda: win.tts_status_var.get() == "Narration complete.")
+
+
+@pytest.mark.parametrize("change", ["mode", "me", "others"])
+def test_changing_the_mode_or_a_device_while_speaking_stops(make_window, change):
+    win, _ = ready(make_window, piece_s=1.0)
+    win.tts_text.insert("end", PARAGRAPH)
+    win.tts_toggle()
+    pump(win, lambda: any(o.blocks for o in FakeOutput.instances))
+    if change == "mode":
+        choose_output(win, "me")
+    else:
+        box = win.me_box if change == "me" else win.others_box
+        box.event_generate("<<ComboboxSelected>>")
+    assert not win.speaking
+    assert win.tts_status_var.get() == "Narration stopped."
+    pump(win, lambda: all(o.closed for o in FakeOutput.instances), timeout=0.25)
+
+
+def test_how_to_set_up_opens_the_cable_steps(make_window, monkeypatch):
+    win, _ = ready(make_window)
+    shown = []
+    monkeypatch.setattr(app.messagebox, "showinfo", lambda title, msg: shown.append(msg))
+    win.setup_btn.invoke()
+    assert len(shown) == 1
+    assert "VB-Audio Virtual Cable" in shown[0] and "CABLE Output" in shown[0] and "CABLE Input" in shown[0]

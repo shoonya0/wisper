@@ -26,7 +26,7 @@ inlining them.
 
 | Module | Path | Responsibility | Owns state? |
 |---|---|---|---|
-| UI + orchestration | `app/app.py` | 3-mode Tkinter app, model picker, job/result queues, worker loop; the TTS pane (Speak/Stop, voice, speed, narration box) and the TTS worker loop | Yes: UI state, transcript, the loaded model (worker thread only), the Kokoro engine (TTS worker only) |
+| UI + orchestration | `app/app.py` | 3-mode Tkinter app, model picker, job/result queues, worker loop; the TTS pane (Speak/Stop, voice, speed, output mode, Me/Others devices, How to set up…, narration box) and the TTS worker loop | Yes: UI state, transcript, the loaded model (worker thread only), the Kokoro engine (TTS worker only) |
 | Capture | `app/capture.py` | List mic/loopback devices; record; energy-gate segmentation into 16 kHz mono chunks; `DICTATION` / `CAPTIONS` profiles | Per-session capture thread + block queue |
 | File decode | `app/audio_io.py` | Decode WAV/MP3/FLAC/OGG to 16 kHz mono via miniaudio | No |
 | Engine binding | `app/whisper_native.py` | ctypes binding to `whisper.dll`; load the model once (GPU-resident); `transcribe()` | The whisper context (not thread safe) |
@@ -57,28 +57,31 @@ independent leaves: each depends only on third-party libraries or the stdlib.
 
 ## Main flows
 
-1. **Model load**: `App._request_model` (`app/app.py:388`) → `jobs.put(("model", path))`
-   → `_worker_loop` (`app/app.py:531`) closes the old model, creates `Whisper(DLL_DIR, path)`,
+1. **Model load**: `App._request_model` (`app/app.py:455`) → `jobs.put(("model", path))`
+   → `_worker_loop` (`app/app.py:602`) closes the old model, creates `Whisper(DLL_DIR, path)`,
    runs a 1 s silent warm-up, then posts `("ready", None)`.
    English-only models pin the language to `en` and lock the language box.
-2. **Dictation / live captions**: `toggle` (`app/app.py:405`) starts `capture.Capture`
+2. **Dictation / live captions**: `toggle` (`app/app.py:472`) starts `capture.Capture`
    with the mode's `Profile` → `_segment_loop` (`app/capture.py:135`) cuts chunks at
    pauses (RMS < 0.006) → `_on_audio_chunk` queues `("audio", chunk, last 200 chars)`
    (the prompt gives context) → the worker transcribes, drops `is_junk` text, then posts
    `("text", …)`.
-3. **File**: `start_file` → `("file", path)` → `_transcribe_file` (`app/app.py:580`)
+3. **File**: `start_file` → `("file", path)` → `_transcribe_file` (`app/app.py:651`)
    decodes, then `Whisper.transcribe_long` runs one `whisper_full` on the whole file.
    whisper.cpp's segment and progress callbacks run on the worker thread and post
    `("text", …)` and `("progress", %)`; overly dense segments (hallucinations) are dropped.
-4. **UI loop**: `_poll` (`app/app.py:686`) drains `results` every 100 ms, appends text,
+4. **UI loop**: `_poll` (`app/app.py:762`) drains `results` every 100 ms, appends text,
    and updates the status line and level meter.
-5. **Narration (N5, mode "Only me")**: at start the TTS worker (`_tts_worker_loop`,
-   `app/app.py:607`) loads Kokoro and warms it up, then posts `("tts_ready", voices)`;
+5. **Narration (N5; output modes N6)**: at start the TTS worker (`_tts_worker_loop`,
+   `app/app.py:678`) loads Kokoro and warms it up, then posts `("tts_ready", voices)`;
    missing files post the setup message and Speak stays disabled. `tts_toggle`
-   (`app/app.py:474`) snapshots the box, takes `narrator.begin()`'s generation id and
-   queues `("speak", gen, text, voice, speed, [default output])`. The worker starts the
+   (`app/app.py:541`) snapshots the box, takes `narrator.begin()`'s generation id and
+   queues `("speak", gen, text, voice, speed, devices)`, where `devices` =
+   `playback.targets_for(mode, me, others)` (Only me / Only others / Both, default Both;
+   no Others device → the §5.3 message and nothing is queued). The output list is read
+   once when the pane is built and a detected cable is pre-selected as Others. The worker starts the
    `Player`, runs `Narrator.speak` and closes the streams. `_poll_tts` ignores results
-   whose generation isn't the one on screen. Stop, Clear and a voice/speed change call
+   whose generation isn't the one on screen. Stop, Clear and a voice/speed/mode/device change call
    `tts_stop` (narrator and player stop at once; the UI resets without waiting).
 
 ## Threading and state
