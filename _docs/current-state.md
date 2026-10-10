@@ -134,7 +134,7 @@ Compare new runs against this list **by test name**.
   | N2 narration box, Save… / Clear / Copy all, Speak disabled | done 2026-10-09 (PR #3), T-UI-2 passed |
   | N3 `tts.py` engine leaf | done 2026-10-09 (PR #4) |
   | N4 `playback.py` leaf | done 2026-10-09 (PR #5); real-device stop → 34 ms |
-  | N5 `narrator.py` + wiring, mode "Only me" | done 2026-10-09: first sound 0.48 s, stop → silence ≤ 34 ms (silent-stream measurement); manual T-TTS-1…5 pending |
+  | N5 `narrator.py` + wiring, mode "Only me" | done 2026-10-09: first sound 0.48 s, stop → silence ≤ 34 ms (silent-stream measurement); manual T-TTS-1…5 passed 2026-10-10 |
   | N6 "Only others" / "Both" | needs VB-Audio Virtual Cable: **not installed** on this PC (VERIFIED 2026-10-09) |
   | N7 polish | — |
 - Known issue 1 (File mode repeated words) is fixed and merged (PR #2, 2026-10-09).

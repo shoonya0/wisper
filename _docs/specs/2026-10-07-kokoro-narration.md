@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | In progress: N0 (spike) and N1 (split window) done 2026-10-07, N2 (narration box), N3 (`tts.py`), N4 (`playback.py`) done 2026-10-09; N5 (narrator + wiring, "Only me") code done 2026-10-09, manual T-TTS-1…5 pending |
+| Status | In progress: N0 (spike) and N1 (split window) done 2026-10-07, N2 (narration box), N3 (`tts.py`), N4 (`playback.py`) done 2026-10-09; N5 (narrator + wiring, "Only me") done 2026-10-10 (T-TTS-1…5 passed), next N6 |
 | Date | 2026-10-07 |
 | Owner | shoonya0 |
 | Test plan | [`_docs/test/kokoro-narration.md`](../test/kokoro-narration.md) |
