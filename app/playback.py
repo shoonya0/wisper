@@ -99,8 +99,10 @@ class PaStream:
 class Player:
     """Plays mono samples on 1-2 devices at once, block by block.
 
-    start(devices), play() and close() run on the one player thread; stop() is the only
-    call that is safe from another thread (it just sets an Event). Streams stay open
+    start(devices), play() and close() must never overlap: in the app the TTS worker calls
+    start/close and the narration-player thread calls play in between (joined before
+    close). stop() is the only call that is safe at any time from another thread (it just
+    sets an Event). Streams stay open
     between play() calls, so sentences follow each other without reopening devices.
     stream_factory(device) returns an object with name, rate, write(mono_block), close().
     start() clears the stop Event, so a stop() that races ahead of the next start() is lost:

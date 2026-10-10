@@ -21,7 +21,10 @@ import numpy as np
 
 import audio_io
 import capture
+import narrator
+import playback
 import priority
+import tts
 from whisper_native import Whisper
 
 WHISPER_DIR = Path(__file__).resolve().parent.parent / "whisper.cpp"
@@ -50,6 +53,9 @@ SOURCE_KIND = {
     "Dictation (microphone)": "mic",
     "Live captions (desktop audio)": "loopback",
 }
+
+SPEEDS = ["0.8", "0.9", "1.0", "1.1", "1.25", "1.5"]     # narration speed (spec §3.2)
+DEVICE_ERROR = "Audio device failed"                     # TTS status only, no dialog (rule 3.3.9)
 
 LANGUAGES = ["auto", "en", "hi", "es", "fr", "de", "ja", "zh", "ru", "pt", "it", "ko", "ar"]
 
@@ -103,6 +109,21 @@ class App:
         self.loaded_model_path = None
         self.want_model_path = None
 
+        # TTS worker owns the Kokoro engine (spec §5.4). Jobs: ("load",)
+        # | ("speak", gen, text, voice, speed, devices) | ("stop",)
+        self.tts_jobs = queue.Queue()
+        self.tts_results = queue.Queue()  # ("tts_ready", voices) | ("tts_missing"|"tts_load_error", msg)
+        #                                   | ("tts_done", gen, stopped) | ("tts_error", gen, msg)
+        self.speaking = False
+        self.tts_gen = None               # generation of the narration the UI is showing
+        self._narrating_gen = None        # TTS worker only
+        self._device_error = None
+        self.narrator = narrator.Narrator(
+            self._tts_synth, self._tts_play, tts.split_sentences,
+            on_done=lambda stopped: self.tts_results.put(("tts_done", self._narrating_gen, stopped)),
+            on_error=lambda msg: self.tts_results.put(("tts_error", self._narrating_gen, msg)))
+        self.player = playback.Player(lambda device: playback.PaStream(self.pa, device), self._on_device_error)
+
         root.title("Wisper — local speech-to-text (RX 580 · Vulkan)")
         root.geometry("1440x680")
         root.minsize(STT_MIN_W + TTS_MIN_W + SASH_W, 420)
@@ -117,6 +138,9 @@ class App:
         root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.worker = threading.Thread(target=self._worker_loop, daemon=True)
         self.worker.start()
+        self.tts_worker = threading.Thread(target=self._tts_worker_loop, daemon=True)
+        self.tts_worker.start()
+        self.tts_jobs.put(("load",))   # in the background: the window opens at once, STT doesn't wait
         self._on_mode_change()
         self._request_model()       # load the initial model
         self._poll()
@@ -206,12 +230,26 @@ class App:
         return stt_pane, tts_pane
 
     def _build_tts_pane(self, parent):
-        # Narration box (spec N2). Speak stays disabled until the engine is wired in N5.
+        # Speak stays disabled until Kokoro has loaded (or for good if its files are missing).
         bar = ttk.Frame(parent, padding=8)
         bar.pack(fill="x")
         self.speak_btn = ttk.Button(bar, text="🔊  Speak", width=11, state="disabled",
-                                    style="Accent.TButton")
+                                    command=self.tts_toggle, style="Accent.TButton")
         self.speak_btn.pack(side="left")
+
+        ttk.Label(bar, text="  Voice:").pack(side="left")
+        self.voice_var = tk.StringVar(value=tts.DEFAULT_VOICE)
+        self.voice_box = ttk.Combobox(bar, textvariable=self.voice_var, values=[tts.DEFAULT_VOICE],
+                                      state="readonly", width=12)
+        self.voice_box.pack(side="left", padx=4)
+        ttk.Label(bar, text="  Speed:").pack(side="left")
+        self.speed_var = tk.StringVar(value="1.0")
+        self.speed_box = ttk.Combobox(bar, textvariable=self.speed_var, values=SPEEDS,
+                                      state="readonly", width=5)
+        self.speed_box.pack(side="left", padx=4)
+        # Rule 3.3.5: changing voice or speed while speaking stops; it applies to the next Speak.
+        for box in (self.voice_box, self.speed_box):
+            box.bind("<<ComboboxSelected>>", lambda e: self.tts_stop())
 
         actions = ttk.Frame(parent, padding=(8, 6))
         actions.pack(fill="x")
@@ -221,7 +259,7 @@ class App:
 
         status = ttk.Frame(parent, padding=(8, 4))
         status.pack(side="bottom", fill="x")    # before the box so it keeps its row
-        self.tts_status_var = tk.StringVar(value="Narration audio isn't available yet.")
+        self.tts_status_var = tk.StringVar(value="Loading Kokoro…")
         ttk.Label(status, textvariable=self.tts_status_var).pack(side="left")
 
         # Editable: the user types or pastes the text to narrate.
@@ -430,8 +468,41 @@ class App:
         self.tts_status_var.set("Copied narration text to clipboard.")
 
     def tts_clear(self):
-        # N5 adds: Clear also stops any narration in progress (spec §3.3 rule 2).
+        self.tts_stop()                   # rule 3.3.2: Clear stops the narration, then empties
         self.tts_text.delete("1.0", "end")
+
+    def tts_toggle(self):
+        if self.speaking:
+            self.tts_stop()
+            return
+        text = self.tts_text.get("1.0", "end-1c")      # snapshot: later edits don't change it
+        if not text.strip():
+            self.tts_status_var.set("Nothing to narrate.")
+            return
+        outputs = playback.list_outputs(self.pa)
+        if not outputs:
+            self.tts_status_var.set("No audio output device found.")
+            return
+        devices = playback.targets_for("me", outputs[0], None)   # N6 adds Others and Both
+        self.tts_gen = self.narrator.begin()
+        self.tts_jobs.put(("speak", self.tts_gen, text, self.voice_var.get(),
+                           float(self.speed_var.get()), devices))
+        self.speaking = True
+        self.speak_btn.config(text="⏹  Stop")
+        self.tts_status_var.set("Speaking…")
+
+    def tts_stop(self):
+        """Stop the narration (Stop, Clear, a voice/speed change). Safe when nothing is playing."""
+        if not self.speaking:
+            return
+        self.narrator.stop()
+        self.player.stop()                # silences every device within one block
+        self._narration_ended("Narration stopped.")
+
+    def _narration_ended(self, message):
+        self.speaking = False
+        self.speak_btn.config(text="🔊  Speak")
+        self.tts_status_var.set(message)
 
     def tts_save(self):
         path = self._save_text(self.tts_text)
@@ -531,6 +602,76 @@ class App:
 
     # --------------------------------------------------------------- UI loop
 
+    # --------------------------------------------------------------- TTS worker
+
+    def _tts_worker_loop(self):
+        """The only thread that touches the Kokoro engine (spec §5.4)."""
+        while True:
+            job = self.tts_jobs.get()
+            if job[0] == "stop":
+                self.player.close()
+                return
+            if job[0] == "load":
+                self._tts_load()
+            elif job[0] == "speak":
+                _, gen, text, voice, speed, devices = job
+                self._narrating_gen = gen
+                self._device_error = None
+                try:
+                    self.player.start(devices)
+                    self.narrator.speak(gen, text, voice=voice, speed=speed)
+                except Exception as e:    # never let the worker die: later Speaks need it
+                    self.tts_results.put(("tts_error", gen, f"Narration failed: {e}"))
+                finally:
+                    self.player.close()
+
+    def _tts_load(self):
+        try:
+            self._engine = tts.load()
+            self._engine.synthesize("Ready.")   # warm-up: the first real Speak is ~2 s faster (N0)
+            voices = self._engine.voices()
+        except FileNotFoundError as e:
+            self.tts_results.put(("tts_missing", str(e)))
+            return
+        except Exception as e:
+            self.tts_results.put(("tts_load_error", f"Couldn't load Kokoro: {e}"))
+            return
+        self.tts_results.put(("tts_ready", voices))
+
+    def _tts_synth(self, piece, voice, speed):
+        return self._engine.synthesize(piece, voice, speed)
+
+    def _tts_play(self, samples, stop_event):
+        if not self.player.play(samples) and self._device_error and not stop_event.is_set():
+            raise RuntimeError(self._device_error)
+
+    def _on_device_error(self, name, error):
+        self._device_error = f"{DEVICE_ERROR}: {name}: {error}"
+
+    def _poll_tts(self):
+        while not self.tts_results.empty():
+            kind, *payload = self.tts_results.get()
+            if kind == "tts_ready":
+                voices = payload[0]
+                self.voice_box.config(values=voices)
+                if self.voice_var.get() not in voices and voices:
+                    self.voice_var.set(voices[0])
+                self.speak_btn.config(state="normal")
+                self.tts_status_var.set("Narration ready.")
+            elif kind == "tts_missing":
+                self.tts_status_var.set(payload[0])
+            elif kind == "tts_load_error":
+                self.tts_status_var.set(payload[0])
+                messagebox.showerror("Wisper", payload[0])
+            elif payload[0] != self.tts_gen or not self.speaking:
+                continue                  # a narration the user already stopped
+            elif kind == "tts_done":      # a stopped narration was already ended by tts_stop()
+                self._narration_ended("Narration complete.")
+            elif kind == "tts_error":
+                self._narration_ended(payload[1])
+                if not payload[1].startswith(DEVICE_ERROR):
+                    messagebox.showerror("Wisper", payload[1])
+
     def _write_locked(self, fn):
         """Run a mutation on the (normally disabled) transcript, then re-lock it."""
         self.text.configure(state="normal")
@@ -575,6 +716,7 @@ class App:
                 state = "Listening" if self.transcribing else "Ready"
             self.status_var.set(f"{state}  •  {self.model_var.get()}  •  queue: {pending}")
 
+        self._poll_tts()
         self.level_bar["value"] = self.capture.level if self.capture else 0
         self.root.after(100, self._poll)
 
@@ -582,6 +724,12 @@ class App:
         if self.capture:
             self.capture.stop()
         self.jobs.put(("stop",))
+        self.narrator.stop()
+        self.player.stop()
+        self.tts_jobs.put(("stop",))
+        # The TTS worker closes its streams before the PyAudio they belong to goes away; a
+        # synthesis in progress (at most ~3 s) isn't waited for beyond this.
+        self.tts_worker.join(timeout=1)
         self.pa.terminate()
         self.root.destroy()
 

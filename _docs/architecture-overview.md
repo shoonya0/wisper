@@ -14,61 +14,85 @@ inlining them.
  audio file ──────►  audio_io.decode_to_16k_mono ─ whole file, one long-form pass ─────┘        │
                                                                                          whisper_native.Whisper
                                                                                          ctypes → whisper.dll (Vulkan, GPU)
+
+ narration box ──Speak──►  tts_jobs Queue ──► TTS worker thread ──────────────► tts_results Queue ──► _poll_tts() ──► button / TTS status
+ (snapshot of text)        ("speak", gen, …)  owns the ONE Kokoro engine        ("tts_done"|"tts_error", gen, …)
+                                              narrator.Narrator: split → synth k+1 ║ play k (narration-player thread)
+                                                                                    └─► playback.Player ─► PaStream (speakers)
+ Stop / Clear (UI thread): narrator.stop() (generation id + Event) and player.stop() → silent within one 50 ms block
 ```
 
 ## Modules
 
 | Module | Path | Responsibility | Owns state? |
 |---|---|---|---|
-| UI + orchestration | `app/app.py` | 3-mode Tkinter app, model picker, job/result queues, worker loop | Yes: UI state, transcript, the loaded model (worker thread only) |
+| UI + orchestration | `app/app.py` | 3-mode Tkinter app, model picker, job/result queues, worker loop; the TTS pane (Speak/Stop, voice, speed, narration box) and the TTS worker loop | Yes: UI state, transcript, the loaded model (worker thread only), the Kokoro engine (TTS worker only) |
 | Capture | `app/capture.py` | List mic/loopback devices; record; energy-gate segmentation into 16 kHz mono chunks; `DICTATION` / `CAPTIONS` profiles | Per-session capture thread + block queue |
 | File decode | `app/audio_io.py` | Decode WAV/MP3/FLAC/OGG to 16 kHz mono via miniaudio | No |
 | Engine binding | `app/whisper_native.py` | ctypes binding to `whisper.dll`; load the model once (GPU-resident); `transcribe()` | The whisper context (not thread safe) |
 | Platform | `app/priority.py` | Windows-only: raise process/thread/GPU scheduling priority, turn off EcoQoS throttling. Best effort, never raises | No |
-| Text to speech | `app/tts.py` | Narration engine (N3, not wired into the UI until N5): `load()` Kokoro-82M fp32 on the CPU (onnxruntime, 4 threads); `Engine.voices()` / `Engine.synthesize()` → float32 @ 24 kHz; pure `split_sentences()` and `lang_for_voice()` | The Kokoro ONNX session (not thread safe: TTS worker only) |
-| Narration output | `app/playback.py` | N4, not wired into the UI until N5: `list_outputs()` (WASAPI, default first), `find_virtual_cable()`, `targets_for(mode, me, others)`, `resample_to()`; `Player` writes the same audio to 1–2 output streams in 50 ms blocks, `stop()` (the only cross-thread call) silences them within a block; `PaStream` is the real PyAudio stream | Open output streams (player thread only) |
+| Text to speech | `app/tts.py` | Narration engine (N3): `load()` Kokoro-82M fp32 on the CPU (onnxruntime, 4 threads); `Engine.voices()` / `Engine.synthesize()` → float32 @ 24 kHz; pure `split_sentences()` and `lang_for_voice()` | The Kokoro ONNX session (not thread safe: TTS worker only) |
+| Narration output | `app/playback.py` | N4: `list_outputs()` (WASAPI, default first), `find_virtual_cable()`, `targets_for(mode, me, others)`, `resample_to()`; `Player` writes the same audio to 1–2 output streams in 50 ms blocks, `stop()` (the only cross-thread call) silences them within a block; `PaStream` is the real PyAudio stream | Open output streams (player thread only) |
+| Narration pipeline | `app/narrator.py` | N5: no Tk or device code; `synth`, `play`, `split` are passed in. `speak(gen, text)` (TTS worker, blocks) synthesizes piece k+1 while a player thread plays piece k, one ahead; `stop()` / `begin()` (any thread) bump a generation id, so a stop before `speak` starts and late synthesis results are dropped; exactly one terminal callback: `on_done(stopped)` or `on_error(msg)` | Per-narration player thread and stop Event |
 | Legacy | `app/live_transcriber.py` | Older standalone loopback-only transcriber (large-v3-turbo). Duplicates capture logic. Not imported by `app.py`, `run.bat` or docs | Its own copy of everything |
 | Launcher | `app/run.bat` | Starts `app.py` with the venv's `pythonw.exe` | — |
 | Engine (upstream) | `whisper.cpp/` (gitignored) | ggml-org/whisper.cpp clone at `6e4ab85`, built with `-DGGML_VULKAN=1`. DLLs in `build/bin/Release/`, models in `models/` | Not our code; no `_docs/` there |
 
 ## Layers and allowed imports (target, enforced by import-linter once H9 lands)
 
-| From \ To | app | capture | audio_io | whisper_native | priority | tts | playback | live_transcriber |
-|---|---|---|---|---|---|---|---|---|
-| **app** | — | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
-| **capture** | ❌ | — | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| **audio_io** | ❌ | ❌ | — | ❌ | ❌ | ❌ | ❌ | ❌ |
-| **whisper_native** | ❌ | ❌ | ❌ | — | ❌ | ❌ | ❌ | ❌ |
-| **priority** | ❌ | ❌ | ❌ | ❌ | — | ❌ | ❌ | ❌ |
-| **tts** | ❌ | ❌ | ❌ | ❌ | ❌ | — | ❌ | ❌ |
-| **playback** | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | — | ❌ |
+| From \ To | app | capture | audio_io | whisper_native | priority | tts | playback | narrator | live_transcriber |
+|---|---|---|---|---|---|---|---|---|---|
+| **app** | — | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
+| **capture** | ❌ | — | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **audio_io** | ❌ | ❌ | — | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **whisper_native** | ❌ | ❌ | ❌ | — | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **priority** | ❌ | ❌ | ❌ | ❌ | — | ❌ | ❌ | ❌ | ❌ |
+| **tts** | ❌ | ❌ | ❌ | ❌ | ❌ | — | ❌ | ❌ | ❌ |
+| **playback** | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | — | ❌ | ❌ |
+| **narrator** | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | — | ❌ |
 
-`app.py` is the only module that wires things together. The six lower modules are
+`app.py` is the only module that wires things together. The seven lower modules are
 independent leaves: each depends only on third-party libraries or the stdlib.
 `live_transcriber.py` is legacy; nothing may import it.
 
 ## Main flows
 
-1. **Model load**: `App._request_model` (`app/app.py:350`) → `jobs.put(("model", path))`
-   → `_worker_loop` (`app/app.py:460`) closes the old model, creates `Whisper(DLL_DIR, path)`,
+1. **Model load**: `App._request_model` (`app/app.py:388`) → `jobs.put(("model", path))`
+   → `_worker_loop` (`app/app.py:531`) closes the old model, creates `Whisper(DLL_DIR, path)`,
    runs a 1 s silent warm-up, then posts `("ready", None)`.
    English-only models pin the language to `en` and lock the language box.
-2. **Dictation / live captions**: `toggle` (`app/app.py:367`) starts `capture.Capture`
+2. **Dictation / live captions**: `toggle` (`app/app.py:405`) starts `capture.Capture`
    with the mode's `Profile` → `_segment_loop` (`app/capture.py:135`) cuts chunks at
    pauses (RMS < 0.006) → `_on_audio_chunk` queues `("audio", chunk, last 200 chars)`
    (the prompt gives context) → the worker transcribes, drops `is_junk` text, then posts
    `("text", …)`.
-3. **File**: `start_file` → `("file", path)` → `_transcribe_file` (`app/app.py:509`)
+3. **File**: `start_file` → `("file", path)` → `_transcribe_file` (`app/app.py:580`)
    decodes, then `Whisper.transcribe_long` runs one `whisper_full` on the whole file.
    whisper.cpp's segment and progress callbacks run on the worker thread and post
    `("text", …)` and `("progress", %)`; overly dense segments (hallucinations) are dropped.
-4. **UI loop**: `_poll` (`app/app.py:550`) drains `results` every 100 ms, appends text,
+4. **UI loop**: `_poll` (`app/app.py:686`) drains `results` every 100 ms, appends text,
    and updates the status line and level meter.
+5. **Narration (N5, mode "Only me")**: at start the TTS worker (`_tts_worker_loop`,
+   `app/app.py:607`) loads Kokoro and warms it up, then posts `("tts_ready", voices)`;
+   missing files post the setup message and Speak stays disabled. `tts_toggle`
+   (`app/app.py:474`) snapshots the box, takes `narrator.begin()`'s generation id and
+   queues `("speak", gen, text, voice, speed, [default output])`. The worker starts the
+   `Player`, runs `Narrator.speak` and closes the streams. `_poll_tts` ignores results
+   whose generation isn't the one on screen. Stop, Clear and a voice/speed change call
+   `tts_stop` (narrator and player stop at once; the UI resets without waiting).
 
 ## Threading and state
 
 - **Exactly one thread touches the model**, the worker started in `App.__init__`. Whisper
   contexts aren't thread safe (`whisper_native.Whisper` docstring).
+- **Exactly one thread touches the Kokoro engine**, the TTS worker (`_tts_worker_loop`).
+  It runs each narration; `Narrator.speak` plays on a short-lived `narration-player`
+  thread. From the UI thread only `Narrator.stop/begin` and `Player.stop` are called
+  (they set an Event and bump a counter).
+- One `PyAudio` instance is shared: capture streams open on the UI thread, narration
+  streams on the narration-player thread. PortAudio doesn't promise that two threads
+  can open streams at the same instant; the window for that is tiny (Start pressed as a
+  narration opens its stream) and is accepted for now.
 - The capture thread only produces chunks. The UI thread only reads `results`.
 - Shared attributes read across threads without locks: `busy`, `language`,
   `loaded_model_path`, `last_text`. This is acceptable under the GIL but fragile; see
@@ -100,5 +124,8 @@ independent leaves: each depends only on third-party libraries or the stdlib.
 - `App._transcribe_file` runs with a fake model and a stand-in `self` (no Tk, no GPU), and
   `Whisper.transcribe_long` runs against a fake `lib` that fires the ctypes callbacks
   (`app/tests/test_file_stitching.py`).
+- Narration: `tts.split_sentences`, `playback` (fake streams) and `narrator` (fake synth
+  and play) are unit-tested; the window's TTS wiring runs with a fake engine and fake
+  output streams (`app/tests/conftest.py`, `test_narration_ui.py`).
 - `whisper_native.Whisper` needs the DLL and the GPU. Treat it as a manual/integration
   test (`whisper.cpp/models/for-tests-*.bin` are tiny models usable for smoke tests).
