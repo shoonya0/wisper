@@ -154,3 +154,19 @@ above plus two more. 5 runs, idle CPU.
 The device's own output buffer comes on top of "first block" and "last block" (not
 measured; WASAPI shared mode is typically 10–30 ms). Not measured yet: Kokoro and
 Whisper dictation at the same time (T-TTS-5, manual).
+
+### VB-Audio Virtual Cable round trip (2026-10-10)
+
+A 150 ms 1 kHz beep played with `playback.Player` + `PaStream` into
+`CABLE Input (VB-Audio Virtual Cable)` (WASAPI, 48 kHz, 2 ch) while a 5 ms-buffer
+WASAPI recorder listens on `CABLE Output`. Silent for the user (nothing on the speakers).
+
+| Run | Beeps received | `play()` call → beep in the recording |
+|---|---|---|
+| 5 beeps, 0.6 s apart | 5/5 | 0.123 / 0.183 / 0.183 / 0.183 / 0.183 s (median 0.183 s) |
+
+Approximate: it includes Wisper's output buffer, the cable and the recorder's input
+buffer, measured against the samples recorded when `play()` was called. This is larger
+than the 10–50 ms first guessed. ASSUMED cause: VB-Cable's default internal buffer
+("Max Latency" in its control panel); lowering it is a lever for the latency increment,
+to be measured. The call app's own buffering and the network come on top.
