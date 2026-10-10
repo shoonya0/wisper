@@ -170,3 +170,29 @@ buffer, measured against the samples recorded when `play()` was called. This is 
 than the 10–50 ms first guessed. ASSUMED cause: VB-Cable's default internal buffer
 ("Max Latency" in its control panel); lowering it is a lever for the latency increment,
 to be measured. The call app's own buffering and the network come on top.
+
+### Mic pass-through (N8, 2026-10-10)
+
+Two WASAPI shared-mode streams on `CABLE Input` at once (440 Hz + 1 kHz, 0.2 each):
+`CABLE Output` carries both (peak 0.40 = the sum). Windows mixes them, so the mic goes in
+on its own stream and the narration `Player` is unchanged.
+
+Real `playback.Passthrough` (`PaInput` → `PaStream`, 10 ms blocks) from
+`Microphone (4- High Definition Audio Device)` (WASAPI, 48 kHz) into `CABLE Input`,
+20 s, while the mic and `CABLE Output` are recorded at the same time (5 ms buffers).
+Delay = cross-correlation of the two recordings (room noise), in 3 s windows. Silent
+for the user; nothing saved.
+
+| Window | 1–4 s | 4–7 s | 7–10 s | 10–13 s | 13–16 s | 16–19 s | 19–22 s |
+|---|---|---|---|---|---|---|---|
+| mic → `CABLE Output` delay | 129 ms | 125 ms | 125 ms | 133 ms | 138 ms* | 127 ms | 130 ms |
+| correlation | 0.93 | 0.94 | 0.64 | 0.22 | 0.02 | 0.63 | 0.35 |
+
+\* correlation too low to trust. **≈ 125–130 ms, no drift over 20 s.** That's Wisper
+(reported: mic stream 22 ms, cable stream 22 ms, one 10 ms block) plus VB-Cable's
+buffer. The call app and the network come on top. PortAudio reports the same 22 ms with
+5 ms blocks, so a smaller block wouldn't help; VB-Cable's "Max Latency" is the lever.
+
+A first run picked `Microsoft Sound Mapper - Input` (MME, from `capture.list_sources`)
+and the delay went from 16 ms to 266 ms within 8 s. So the pass-through lists WASAPI
+mics only (`playback.list_inputs`). Not measured: a run of 10 minutes or more.

@@ -10,7 +10,17 @@ import numpy as np
 import pytest
 
 import playback
-from playback import NO_OTHERS_MESSAGE, Player, find_virtual_cable, resample_to, targets_for
+from playback import (
+    MAX_BACKLOG_BLOCKS,
+    NO_OTHERS_MESSAGE,
+    LinearResampler,
+    Passthrough,
+    Player,
+    find_virtual_cable,
+    is_virtual_cable,
+    resample_to,
+    targets_for,
+)
 
 BLOCK_S = 0.02
 
@@ -294,3 +304,269 @@ def test_open_error_reports_the_device_and_closes_streams_already_open():
     assert player.play(np.ones(480, dtype=np.float32)) is False
     assert errors == ["others"]
     assert opened[0].closed and not opened[0].writes
+
+
+# ---------------------------------------------------------------- mic pass-through (N8)
+
+@pytest.mark.parametrize("name, cable", [
+    ("CABLE Output (VB-Audio Virtual Cable)", True),
+    ("CABLE Input (VB-Audio Virtual Cable)", True),
+    ("VoiceMeeter Output (VB-Audio VoiceMeeter VAIO)", True),
+    ("Line 1 (Virtual Audio Cable)", True),
+    ("Microphone (4- High Definition Audio Device)", False),
+    ("Headset Microphone (Realtek(R) Audio)", False),
+])
+def test_is_virtual_cable_covers_both_sides(name, cable):
+    assert is_virtual_cable(name) is cable
+
+
+def test_list_inputs_wasapi_mics_only_no_cables_default_first():
+    devices = [
+        {"index": 3, "name": "Microsoft Sound Mapper - Input", "hostApi": 0, "maxInputChannels": 2},
+        {"index": 5, "name": "Speakers", "hostApi": 2, "maxInputChannels": 0},
+        {"index": 6, "name": "CABLE Output (VB-Audio Virtual Cable)", "hostApi": 2, "maxInputChannels": 2},
+        {"index": 7, "name": "Headset Microphone", "hostApi": 2, "maxInputChannels": 1},
+        {"index": 8, "name": "Microphone (Realtek)", "hostApi": 2, "maxInputChannels": 2},
+        {"index": 9, "name": "Speakers [Loopback]", "hostApi": 2, "maxInputChannels": 2, "isLoopbackDevice": True},
+    ]
+
+    class FakeInputPa(FakePa):
+        WASAPI = {"index": 2, "defaultInputDevice": 8}
+
+    assert [d["label"] for d in playback.list_inputs(FakeInputPa(devices))] == [
+        "Microphone (Realtek)", "Headset Microphone"]
+
+
+def test_linear_resampler_same_rate_returns_the_block():
+    block = np.ones(480, dtype=np.float32)
+    assert LinearResampler(48000, 48000)(block) is block
+
+
+def test_linear_resampler_44k1_to_48k_is_continuous_across_blocks():
+    t = np.arange(44100) / 44100
+    sine = np.sin(2 * np.pi * 440 * t).astype(np.float32)
+    rs = LinearResampler(44100, 48000)
+    out = np.concatenate([rs(sine[i:i + 441]) for i in range(0, len(sine), 441)])
+    assert out.dtype == np.float32
+    assert abs(len(out) - 48000) <= 2
+    expected = np.sin(2 * np.pi * 440 * np.arange(len(out)) / 48000)
+    assert np.abs(out - expected).max() < 0.01, "a jump at a block boundary"
+
+
+class FakeMic:
+    """Endless mic: block k is filled with k. Counts frames waiting since the last read."""
+
+    def __init__(self, device, backlog=0, fail_on=None, read_s=0.002):
+        self.name, self.rate = device["label"], int(device["defaultSampleRate"])
+        self.backlog, self.fail_on, self.read_s = backlog, fail_on, read_s
+        self.reads, self.dropped, self.closed = 0, 0, False
+
+    def available(self):
+        return self.backlog
+
+    def read(self, frames):
+        if self.closed:
+            raise AssertionError("read after close")
+        if self.fail_on is not None and self.reads == self.fail_on:
+            raise OSError("mic unplugged")
+        if self.backlog:                          # the first read after a backlog drops it
+            self.dropped, self.backlog = frames, 0
+            return np.zeros(frames, dtype=np.float32)
+        time.sleep(self.read_s)
+        self.reads += 1
+        return np.full(frames, self.reads, dtype=np.float32)
+
+    def close(self):
+        self.closed = True
+
+
+def make_passthrough(mic_kw=None, cable_kw=None, open_error=None):
+    made, errors = {}, []
+
+    def open_input(device):
+        made["mic"] = FakeMic(device, **(mic_kw or {}))
+        return made["mic"]
+
+    def open_output(device):
+        if open_error:
+            raise open_error
+        made["cable"] = FakeStream(device, **(cable_kw or {}))
+        return made["cable"]
+
+    pt = Passthrough(open_input, open_output, lambda name, e, run: errors.append((name, e, run)), block_s=0.01)
+    return pt, made, errors
+
+
+MIC = dev(5, "Microphone (Realtek)")
+
+
+def wait_for(cond, timeout=2.0):
+    deadline = time.monotonic() + timeout
+    while not cond():
+        assert time.monotonic() < deadline, "timed out"
+        time.sleep(0.005)
+
+
+def test_passthrough_copies_mic_blocks_to_the_cable_in_order():
+    pt, made, errors = make_passthrough()
+    pt.start(MIC, CABLE)
+    wait_for(lambda: "cable" in made and len(made["cable"].writes) >= 5)
+    pt.stop()
+    firsts = [int(w[0]) for w in made["cable"].writes]
+    assert firsts == list(range(1, len(firsts) + 1))
+    assert all(len(w) == 480 for w in made["cable"].writes)       # 10 ms at 48 kHz
+    assert not errors
+
+
+def test_passthrough_stop_ends_the_thread_and_closes_both_streams():
+    pt, made, errors = make_passthrough()
+    pt.start(MIC, CABLE)
+    wait_for(lambda: pt.running and "cable" in made)
+    pt.stop()
+    assert not pt.running
+    assert made["mic"].closed and made["cable"].closed
+    writes = len(made["cable"].writes)
+    time.sleep(0.05)
+    assert len(made["cable"].writes) == writes
+    pt.stop()                                                        # idempotent
+    assert not errors
+
+
+def test_passthrough_drops_a_backlog_so_the_delay_cannot_grow():
+    pt, made, _ = make_passthrough(mic_kw={"backlog": (MAX_BACKLOG_BLOCKS + 5) * 480})
+    pt.start(MIC, CABLE)
+    wait_for(lambda: "cable" in made and made["cable"].writes)
+    pt.stop()
+    assert made["mic"].dropped == 5 * 480, "only the frames beyond the allowed backlog are dropped"
+
+
+def test_passthrough_restart_switches_devices():
+    pt, made, _ = make_passthrough()
+    pt.start(MIC, CABLE)
+    wait_for(lambda: "cable" in made)
+    first_mic = made["mic"]
+    pt.start(dev(6, "Headset Microphone"), CABLE)
+    assert first_mic.closed
+    wait_for(lambda: made["mic"] is not first_mic and made["mic"].reads)
+    assert made["mic"].name == "Headset Microphone"
+    pt.stop()
+
+
+def test_passthrough_mic_error_is_reported_once_and_closes_both_streams():
+    pt, made, errors = make_passthrough(mic_kw={"fail_on": 3})
+    pt.start(MIC, CABLE)
+    wait_for(lambda: not pt.running)
+    assert [name for name, _, _ in errors] == [MIC["label"]]
+    assert isinstance(errors[0][1], OSError)
+    assert made["mic"].closed and made["cable"].closed
+
+
+def test_passthrough_cable_write_error_names_the_cable():
+    pt, made, errors = make_passthrough(cable_kw={"fail_on": 2})
+    pt.start(MIC, CABLE)
+    wait_for(lambda: not pt.running)
+    assert [name for name, _, _ in errors] == [CABLE["label"]]
+    assert made["mic"].closed
+
+
+def test_passthrough_cable_open_error_closes_the_mic():
+    pt, made, errors = make_passthrough(open_error=OSError("device busy"))
+    pt.start(MIC, CABLE)
+    wait_for(lambda: not pt.running)
+    assert [name for name, _, _ in errors] == [CABLE["label"]]
+    assert made["mic"].closed
+
+
+def test_passthrough_error_while_stopping_is_not_reported():
+    reading = threading.Event()
+
+    class ClosingMic(FakeMic):
+        def read(self, frames):
+            reading.set()
+            time.sleep(0.05)                     # stop() arrives during this read ...
+            raise OSError("stream closed")      # ... which then fails, as a closing device does
+
+    errors = []
+    pt = Passthrough(lambda d: ClosingMic(d), lambda d: FakeStream(d), lambda n, e, run: errors.append(n), block_s=0.01)
+    pt.start(MIC, CABLE)
+    reading.wait(1)
+    pt.stop()
+    assert not pt.running and errors == []
+
+
+def test_a_slow_old_run_never_keeps_running_after_a_restart():
+    # Opening a mic can take seconds (a Bluetooth headset switching profile); stop() only
+    # waits join_s. The old run must still end, write nothing and report nothing.
+    mics, errors = [], []
+
+    def open_input(device):
+        if not mics:
+            time.sleep(0.3)                      # longer than join_s below
+        mics.append(FakeMic(device))
+        return mics[-1]
+
+    cables = []
+
+    def open_output(device):
+        cables.append(FakeStream(device))
+        return cables[-1]
+
+    pt = Passthrough(open_input, open_output, lambda name, e, run: errors.append(name), block_s=0.01, join_s=0.05)
+    pt.start(MIC, CABLE)
+    time.sleep(0.02)                             # the first run is still opening the mic
+    pt.start(dev(6, "Headset Microphone"), CABLE)
+    wait_for(lambda: len(mics) == 2 and all(m.closed for m in mics[:1]) and mics[1].reads >= 3)
+    old = [m for m in mics if m.name == MIC["label"]]
+    assert old and old[0].reads == 0, "the old run read the mic after it was replaced"
+    writers = [c for c in cables if c.writes]
+    assert len(writers) == 1, "two runs wrote to the cable"
+    pt.close()
+    assert not pt.running and all(m.closed for m in mics) and errors == []
+
+
+def test_close_waits_for_a_run_that_outlived_stop():
+    opened = threading.Event()
+
+    def open_input(device):
+        time.sleep(0.2)
+        opened.set()
+        return FakeMic(device)
+
+    pt = Passthrough(open_input, lambda d: FakeStream(d), lambda name, e, run: None, block_s=0.01, join_s=0.02)
+    pt.start(MIC, CABLE)
+    pt.stop()                                    # returns before the open finishes
+    pt.close()                                   # must wait for it: PyAudio is terminated next
+    assert opened.is_set()
+    assert not any(t.name == "mic-passthrough" and t.is_alive() for t in threading.enumerate())
+
+
+def test_errors_carry_the_run_they_belong_to():
+    pt, made, errors = make_passthrough(mic_kw={"fail_on": 1})
+    pt.start(MIC, CABLE)
+    wait_for(lambda: not pt.running)
+    assert [run for _, _, run in errors] == [pt.run_id]
+
+
+def test_pa_input_returns_mono_float32_blocks():
+    class FakeRawStream:
+        def read(self, frames, exception_on_overflow=True):
+            assert exception_on_overflow is False
+            return np.tile(np.array([0.2, 0.4], dtype=np.float32), frames).tobytes()
+
+        def get_read_available(self):
+            return 7
+
+        def close(self):
+            pass
+
+    class FakeOpenPa:
+        def open(self, **kw):
+            self.kw = kw
+            return FakeRawStream()
+
+    pa = FakeOpenPa()
+    mic = playback.PaInput(pa, {**MIC, "maxInputChannels": 2, "defaultSampleRate": 48000})
+    assert pa.kw["input"] and pa.kw["channels"] == 2 and pa.kw["frames_per_buffer"] == 480
+    block = mic.read(480)
+    assert block.shape == (480,) and np.allclose(block, 0.3)
+    assert mic.available() == 7

@@ -32,7 +32,7 @@ inlining them.
 | Engine binding | `app/whisper_native.py` | ctypes binding to `whisper.dll`; load the model once (GPU-resident); `transcribe()` | The whisper context (not thread safe) |
 | Platform | `app/priority.py` | Windows-only: raise process/thread/GPU scheduling priority, turn off EcoQoS throttling. Best effort, never raises | No |
 | Text to speech | `app/tts.py` | Narration engine (N3): `load()` Kokoro-82M fp32 on the CPU (onnxruntime, 4 threads); `Engine.voices()` / `Engine.synthesize()` → float32 @ 24 kHz; pure `split_sentences()` and `lang_for_voice()` | The Kokoro ONNX session (not thread safe: TTS worker only) |
-| Narration output | `app/playback.py` | N4: `list_outputs()` (WASAPI, default first), `find_virtual_cable()`, `targets_for(mode, me, others)`, `resample_to()`; `Player` writes the same audio to 1–2 output streams in 50 ms blocks, `stop()` (the only cross-thread call) silences them within a block; `PaStream` is the real PyAudio stream | Open output streams (player thread only) |
+| Narration output | `app/playback.py` | N4: `list_outputs()` (WASAPI, default first), `find_virtual_cable()`, `targets_for(mode, me, others)`, `resample_to()`; `Player` writes the same audio to 1–2 output streams in 50 ms blocks, `stop()` (the only cross-thread call) silences them within a block; `PaStream` is the real PyAudio stream. N8: `list_inputs()` (WASAPI mics, no cables), `is_virtual_cable()`, `PaInput`, `LinearResampler`, `Passthrough` copies the mic into the cable in 10 ms blocks on its own thread (Windows mixes it with the narration) | Open output streams (player thread only); the pass-through's mic and cable streams (`mic-passthrough` thread only) |
 | Narration pipeline | `app/narrator.py` | N5: no Tk or device code; `synth`, `play`, `split` are passed in. `speak(gen, text)` (TTS worker, blocks) synthesizes piece k+1 while a player thread plays piece k, one ahead; `stop()` / `begin()` (any thread) bump a generation id, so a stop before `speak` starts and late synthesis results are dropped; exactly one terminal callback: `on_done(stopped)` or `on_error(msg)` | Per-narration player thread and stop Event |
 | Legacy | `app/live_transcriber.py` | Older standalone loopback-only transcriber (large-v3-turbo). Duplicates capture logic. Not imported by `app.py`, `run.bat` or docs | Its own copy of everything |
 | Launcher | `app/run.bat` | Starts `app.py` with the venv's `pythonw.exe` | — |
@@ -92,6 +92,10 @@ independent leaves: each depends only on third-party libraries or the stdlib.
   It runs each narration; `Narrator.speak` plays on a short-lived `narration-player`
   thread. From the UI thread only `Narrator.stop/begin` and `Player.stop` are called
   (they set an Event and bump a counter).
+- The **`mic-passthrough`** thread (N8) only reads the mic and writes the cable through its
+  own two streams. `Passthrough.start/stop` are called from the UI thread; errors come
+  back as `("pass_error", run_id, msg)` on `tts_results`; `on_close` calls
+  `Passthrough.close()`, which also waits for a run that outlived `stop()`.
 - One `PyAudio` instance is shared: capture streams open on the UI thread, narration
   streams on the narration-player thread. PortAudio doesn't promise that two threads
   can open streams at the same instant; the window for that is tiny (Start pressed as a
