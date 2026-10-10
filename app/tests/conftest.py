@@ -46,18 +46,24 @@ class FakeEngine:
 
 
 class FakeOutput:
-    """Stands in for playback.PaStream: takes blocks in real time, records them."""
+    """Stands in for playback.PaStream: records blocks; the speakers take them in real time.
+
+    Real streams buffer in parallel, so only one fake paces: in "Both" the cable's writes
+    return at once, as in test_playback.py.
+    """
 
     instances = []
 
     def __init__(self, pa, device):
         self.name, self.rate = device["label"], 24000
+        self.realtime = device is not CABLE
         self.blocks = 0
         self.closed = False
         FakeOutput.instances.append(self)
 
     def write(self, block):
-        time.sleep(len(block) / self.rate)
+        if self.realtime:
+            time.sleep(len(block) / self.rate)
         self.blocks += 1
 
     def close(self):
@@ -66,14 +72,16 @@ class FakeOutput:
 
 SPEAKERS = {"index": 0, "name": "Speakers", "label": "Speakers", "defaultSampleRate": 24000,
             "maxOutputChannels": 2}
+CABLE = {"index": 1, "name": "CABLE Input (VB-Audio Virtual Cable)",
+         "label": "CABLE Input (VB-Audio Virtual Cable)", "defaultSampleRate": 24000, "maxOutputChannels": 2}
 
 
 @pytest.fixture
 def make_window(monkeypatch):
-    """make_window(engine=None): engine None = Kokoro files missing; else a FakeEngine."""
+    """make_window(engine=None, outputs=(SPEAKERS, CABLE)): engine None = Kokoro files missing."""
     windows = []
 
-    def make(engine=None):
+    def make(engine=None, outputs=(SPEAKERS, CABLE)):
         def load():
             if engine is None:
                 raise FileNotFoundError(app.tts.MISSING_MESSAGE)
@@ -83,7 +91,7 @@ def make_window(monkeypatch):
         monkeypatch.setattr(app.capture.pyaudio, "PyAudio", FakePyAudio)
         monkeypatch.setattr(app.capture, "list_sources", lambda pa, kind: [])
         monkeypatch.setattr(app.tts, "load", load)
-        monkeypatch.setattr(app.playback, "list_outputs", lambda pa: [SPEAKERS])
+        monkeypatch.setattr(app.playback, "list_outputs", lambda pa: list(outputs))
         monkeypatch.setattr(app.playback, "PaStream", FakeOutput)
         FakeOutput.instances = []
         # No skip on TclError: Wisper is Windows-only, where Tk always has a display, and a

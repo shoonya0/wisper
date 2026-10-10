@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | In progress: N0 (spike) and N1 (split window) done 2026-10-07, N2 (narration box), N3 (`tts.py`), N4 (`playback.py`) done 2026-10-09; N5 (narrator + wiring, "Only me") done 2026-10-10 (T-TTS-1…5 passed), next N6 |
+| Status | In progress: N0 (spike) and N1 (split window) done 2026-10-07, N2 (narration box), N3 (`tts.py`), N4 (`playback.py`) done 2026-10-09; N5 (narrator + wiring, "Only me") done 2026-10-10 (T-TTS-1…5 passed); N6 ("Only others" / "Both", default Both) done 2026-10-10 (T-MODE-2 passed in Google Meet); next N8 (mic pass-through), then N7 |
 | Date | 2026-10-07 |
 | Owner | shoonya0 |
 | Test plan | [`_docs/test/kokoro-narration.md`](../test/kokoro-narration.md) |
@@ -51,8 +51,9 @@ or to both.
 ```text
 ┌──────────────── Speech to text ────────────────┬──────────────── Text to speech ─────────────┐
 │ [▶ Start] Mode:[Dictation ▾] Model:[…▾] Lang:[…]│ [🔊 Speak] Voice:[af_heart ▾] Speed:[1.0 ▾] │
-│ Device: [Microphone (Realtek) ▾]                │ Output: (•) Only me ( ) Only others ( ) Both│
-│                     [Save…] [Clear] [Copy all] │ Me: [Speakers ▾]  Others: [CABLE Input ▾]  │
+│ Device: [Microphone (Realtek) ▾]                │ Output: ( ) Only me ( ) Only others (•) Both│
+│                     [Save…] [Clear] [Copy all] │ Me:     [Speakers ▾                       ]│
+│                                                │ Others: [CABLE Input ▾      ] [How to set up…]│
 │ ┌────────────────────────────────────────────┐ │                     [Save…] [Clear] [Copy all]│
 │ │ transcript (read-only, as today)           │ │ ┌──────────────────────────────────────────┐│
 │ │                                            │ │ │ narration text (editable: type or paste) ││
@@ -79,9 +80,10 @@ or to both.
 | **Speak / Stop** button (accent) | Speak: reads the whole box from the start. While speaking, the label changes to "⏹ Stop". Disabled while the Kokoro model is loading or missing. An empty box: rule 3.3.7 |
 | Voice | Kokoro voices from `voices-v1.0.bin`, grouped by language prefix (`af_`/`am_` = US English, `bf_`/`bm_` = UK English, `e`, `f`, `h`, `i`, `p`). Default `af_heart` (VERIFIED present among the 54 voices; how it sounds is checked in T-TTS-1). The language passed to Kokoro is derived from the voice prefix |
 | Speed | 0.8 / 0.9 / 1.0 / 1.1 / 1.25 / 1.5. Default 1.0 |
-| Output | Radio buttons: Only me · Only others · Both |
+| Output | Radio buttons: Only me · Only others · Both. **Default Both** (user decision, 2026-10-10). Without a detected cable, Both still is the default and Speak shows the §5.3 message until an Others device is chosen |
 | Me device | Output devices (WASAPI). Default = the Windows default output |
-| Others device | Output devices. Pre-selects a detected virtual cable (§5.3). Hidden or disabled in "Only me" mode |
+| Others device | Output devices. Pre-selects a detected virtual cable (§5.3). Disabled in "Only me" mode (N6: disabled, not hidden, so the layout doesn't jump) |
+| How to set up… | Always shown next to Others (N6). Opens a short dialog: install VB-Audio Virtual Cable, reboot, pick `CABLE Input` as Others, pick `CABLE Output` as the call app's microphone, and the real-mic limitation of §4 with the "Listen to this device" workaround |
 | Save… | Saves the box text to `.txt` (UTF-8), the same as the transcript Save… |
 | Clear | Empties the box **and stops any narration in progress** |
 | Copy all | Copies the box text to the clipboard and shows "Copied narration text to clipboard." |
@@ -127,7 +129,7 @@ common free (donationware) driver: whatever plays into "CABLE Input" comes out o
 **Known limitation:** while the call app uses `CABLE Output` as its microphone, the
 user's **real** microphone doesn't reach the call. v1 documents the workarounds (Windows
 "Listen to this device" on the real mic, routed to CABLE Input, or VoiceMeeter). Increment
-N8 (optional, open decision 2) would have Wisper itself mix the real mic into the cable.
+N8 (open decision 2: **build it**, user 2026-10-10) will have Wisper itself mix the real mic into the cable.
 
 **Feedback risk:** if the Live captions mode (loopback) is running on the same speakers
 as "Only me" or "Both", Wisper transcribes its own narration. v1 accepts this and
@@ -211,7 +213,7 @@ insensitive) one of: `CABLE Input`, `VB-Audio`, `VoiceMeeter Input`,
 `Virtual Audio Cable`, `Line 1 (Virtual`. If none is found:
 
 - "Only others" and "Both" stay selectable, but the Others list shows all output devices
-  with nothing pre-selected, and a **"How to set up…"** link opens a short dialog:
+  with nothing pre-selected, and the **"How to set up…"** button (always shown, N6) opens a short dialog:
   install VB-Audio Virtual Cable, reboot, then in the call app pick
   "CABLE Output" as the microphone.
 - Speak in those modes with no Others device selected → flash
@@ -287,9 +289,9 @@ the UI. Moving Kokoro to the GPU is not a fallback (§5.1).
 | **N3** | **`tts.py` engine leaf** | `load`, `voices`, `lang_for_voice`, `split_sentences`, `synthesize` | `test_tts_split.py` (≈12 cases: abbreviations, decimals, `…`, `।`, blank lines, long piece re-split, round trip, empty); `test_tts_voices.py` (`lang_for_voice` table); `test_tts_engine.py` (**slow**, skipped with a reason when `models/kokoro/` is missing: "Hello world." → float32, 24 kHz, 0.4–3 s) | tests pass; architecture test lists `tts` |
 | **N4** | **`playback.py` leaf** | WASAPI output list, `find_virtual_cable`, `targets_for`, `resample_to`, `Player(stream_factory)` | `test_playback.py`: cable detection names; `targets_for` for all 3 modes, including a missing Others device; resample length and dtype; `Player` with fake streams: both streams get identical blocks, `stop()` → no writes after the current block, stop latency < 2 blocks (the block being written finishes), a device error → error callback, not an exception | tests pass; architecture test lists `playback` |
 | **N5** | **`narrator.py` + wiring, mode "Only me"** | narrator pipeline; TTS worker thread and queues in `app.py`; Speak/Stop, voice, speed; Clear and Stop stop the narration; background model load at start; missing-model message | `test_narrator.py` (fakes): order is kept; prefetch is one ahead; `stop()` mid-sentence → later sentences never play; a late synthesis result after stop is dropped (generation id); a new speak after stop works; empty text → done immediately; synthesis error → error callback, the narration ends | AC2, AC5, AC7 manual; first-sound and stop latency measured in the real app and added to `performance.md` |
-| **N6** | **Modes "Only others" and "Both"** | Output radio buttons; Me and Others device pickers; cable auto-select; "How to set up…" dialog; changing mode or device stops the narration (rule 3.3.5) | `test_playback.py` += mode → targets with a detected cable / no cable; `Player` with 2 fake streams stops both | AC3, AC4 manual with a real call app |
+| **N6** | **Modes "Only others" and "Both"** (default Both) | Output radio buttons; Me and Others device pickers; cable auto-select; "How to set up…" dialog; changing mode or device stops the narration (rule 3.3.5) | `test_playback.py` already covers mode → targets with / without an Others device and a 2-stream stop (N4). `test_narration_ui.py` += default Both with the cable pre-selected; Both plays on both devices; Only others plays only on the cable; Only me disables Others; no cable → nothing pre-selected and Speak shows the §5.3 message; mode and device changes stop; How to set up… opens the steps. `test_window_layout.py`: the new controls fit at the minimum size | AC3, AC4 manual with a real call app |
 | **N7** | **Polish** | `Ctrl+Enter`; status "Speaking 3/12…"; device-unplugged handling (rule 3.3.9); the Live captions feedback note in the UI help | `test_narrator.py` += progress callback counts; `test_playback.py` += write error mid-stream | T-ERR-2 manual |
-| N8 *(optional, open decision 2)* | **Mic pass-through** into the cable, so the user can talk *and* narrate in one call | `playback.py` mixer: real mic → cable plus narration (mix and clip) | mixer sum/clip unit tests | only if the user wants it |
+| **N8** *(next, user decision 2026-10-10)* | **Mic pass-through** into the cable, so the user can talk *and* narrate in one call | `playback.py` mixer: real mic → cable plus narration (mix and clip) | mixer sum/clip unit tests | the call hears my voice and the narration at the same time (Meet test). Needs its own spec section first (continuous cable stream, mic → cable latency, behavior while Dictation uses the same mic) |
 
 After N7: update `current-state.md` (what a user can do), `architecture-overview.md`
 (diagram, module table, threads, layer table) and the README feature list.
@@ -299,7 +301,7 @@ After N7: update `current-state.md` (what a user can do), `architecture-overview
 | # | Decision | Options | Recommendation |
 |---|---|---|---|
 | 1 | Edit the box while it is speaking? | Snapshot (rule 3.3.1) · lock the box while speaking | Snapshot: you can prepare the next text while it speaks |
-| 2 | Real mic plus narration in the same call | document the Windows/VoiceMeeter workaround (v1) · build N8 | v1 documents it; decide on N8 after using v1 |
+| 2 | ~~Real mic plus narration in the same call~~ | **Resolved 2026-10-10: build N8.** In the N6 Meet test the call heard the narration but not the user's voice; the user wants both at once | — |
 | 3 | GPL-3 deps (`phonemizer`, espeak-ng) | accept (personal or local use) · look for a non-GPL G2P | Accept unless you plan to distribute Wisper |
 | 4 | ~~Default model variant~~ | **Resolved by N0: fp32.** int8 is ~10× slower on this CPU | — |
 
