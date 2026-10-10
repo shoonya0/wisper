@@ -1,6 +1,6 @@
-# Wisper: current state (snapshot 2026-10-09)
+# Wisper: current state (snapshot 2026-10-10)
 
-Snapshot taken at `7ef8117` on `master` (narration N0–N4 merged: PRs #1, #3, #4, #5; File-mode fix PR #2).
+Snapshot taken at `fa7b764` on `master` (narration N0–N5 merged: PRs #1, #3, #4, #5, #6; File-mode fix PR #2).
 One page; update it when an increment lands.
 Claims are marked **VERIFIED** (run or read in code) or **ASSUMED**.
 
@@ -11,7 +11,7 @@ Claims are marked **VERIFIED** (run or read in code) or **ASSUMED**.
 | App (3 modes) | ✅ working (ASSUMED: the author's use, not run during setup) | `app/app.py`. Since N1 the window is split: STT on the left, TTS on the right (narration box with Save… / Clear / Copy all, Speak/Stop, voice and speed since N5). The app starts and loads a model on the GPU (VERIFIED by screenshot, N1) |
 | Engine build | ✅ present (VERIFIED) | `whisper.cpp/build/bin/Release/whisper.dll` + `ggml-vulkan.dll`, `GGML_VULKAN=1` in CMakeCache |
 | Models | ✅ present (VERIFIED) | base.en-q5_1, small.en-q5_1, large-v3-turbo-q5_0 in `whisper.cpp/models/` |
-| Narration (TTS) | 🚧 N0–N5 done: Speak/Stop with voice and speed, mode "Only me"; N6 (into a call) next | Kokoro-82M fp32 on the CPU: RTF 0.36–0.40 with 4 threads ([performance.md](./performance.md)); model in `models/kokoro/` |
+| Narration (TTS) | 🚧 N0–N5 done and merged: Speak/Stop with voice and speed, mode "Only me" (T-TTS-1…5 passed). N6 (into a call) next; VB-Audio Virtual Cable installed and verified (2026-10-10) | Kokoro-82M fp32 on the CPU: RTF 0.36–0.40 with 4 threads ([performance.md](./performance.md)); model in `models/kokoro/` |
 | Tests | ✅ 136 fast + 2 slow tests (characterization, architecture, window layout + narration box, file stitching, TTS splitting/voices/engine, playback, narrator, narration UI) | baseline below |
 | AI harness | ✅ set up; CI runs on GitHub; guard hook verified live | [`ai-harness-setup.md`](./ai-harness-setup.md) |
 
@@ -25,7 +25,9 @@ Claims are marked **VERIFIED** (run or read in code) or **ASSUMED**.
 - **Narration box** (right pane): type or paste text; its own Copy all / Save… / Clear.
 - **Narration (N5, "Only me")**: Speak reads the narration box aloud on the default
   output device with a chosen Kokoro voice and speed; Stop or Clear silences it at once.
-  "Only others" / "Both" (into a call) come in N6.
+  "Only others" / "Both" (into a call) come in N6. VB-Audio Virtual Cable is installed:
+  `CABLE Input` (output) and `CABLE Output` (microphone for Meet/Zoom/Discord) exist,
+  and `playback.find_virtual_cable` picks `CABLE Input (VB-Audio Virtual Cable)` (VERIFIED).
 
 ## How to build, run, test
 
@@ -134,7 +136,8 @@ Compare new runs against this list **by test name**.
   | N2 narration box, Save… / Clear / Copy all, Speak disabled | done 2026-10-09 (PR #3), T-UI-2 passed |
   | N3 `tts.py` engine leaf | done 2026-10-09 (PR #4) |
   | N4 `playback.py` leaf | done 2026-10-09 (PR #5); real-device stop → 34 ms |
-  | N5 `narrator.py` + wiring, mode "Only me" | done 2026-10-09: first sound 0.48 s, stop → silence ≤ 34 ms (silent-stream measurement); manual T-TTS-1…5 passed 2026-10-10 |
-  | N6 "Only others" / "Both" | needs VB-Audio Virtual Cable: **not installed** on this PC (VERIFIED 2026-10-09) |
+  | N5 `narrator.py` + wiring, mode "Only me" | done (PR #6): first sound 0.48 s, stop → silence ≤ 34 ms (silent-stream measurement); manual T-TTS-1…5 passed 2026-10-10 |
+  | **N6 "Only others" / "Both"** | **next**. VB-Cable installed (2026-10-10); a beep played with `playback.Player` into CABLE Input arrives at CABLE Output 5/5 times, ~0.12–0.18 s later ([performance.md](./performance.md)) |
   | N7 polish | — |
+  | Latency (after N6, user goal: lowest possible delay in live calls) | measure the whole chain in a real call first (`optimized-app-research`), then: synthesize while typing, phrase cache, smaller player blocks, smaller VB-Cable buffer |
 - Known issue 1 (File mode repeated words) is fixed and merged (PR #2, 2026-10-09).
