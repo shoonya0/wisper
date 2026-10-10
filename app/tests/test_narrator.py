@@ -174,3 +174,33 @@ def test_split_error_is_reported_and_the_worker_survives():
     assert errors == ["split failed"] and done == []
     n.speak(n.begin(), "fine")
     assert done == [False]
+
+
+# ---------------------------------------------------------------- progress (N7)
+
+def test_progress_reports_each_piece_as_it_starts_playing():
+    f = Fakes()
+    progress = []
+    f.narrator = Narrator(f.synth, f.play, f.split, f.on_done, f.on_error,
+                          on_progress=lambda i, n: progress.append((i, n, list(f.played))))
+    f.narrator.speak(f.narrator.begin(), "s1|s2|s3")
+    assert [(i, n) for i, n, _ in progress] == [(1, 3), (2, 3), (3, 3)]
+    assert [played for _, _, played in progress] == [[], [1], [1, 2]], "reported before the piece plays"
+
+
+def test_no_progress_after_stop():
+    f = Fakes(play_s=0.3)
+    progress = []
+    f.narrator = Narrator(f.synth, f.play, f.split, f.on_done, f.on_error,
+                          on_progress=lambda i, n: progress.append(i))
+    worker = f.speak_in_background("s1|s2|s3")
+    time.sleep(0.1)
+    f.narrator.stop()
+    worker.join(2)
+    assert progress == [1]
+
+
+def test_progress_is_optional():
+    f = Fakes()
+    f.narrator.speak(f.narrator.begin(), "s1|s2")
+    assert f.played == [1, 2]

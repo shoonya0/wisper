@@ -15,9 +15,9 @@ import app
 PARAGRAPH = "First sentence here. Second one follows. And a third."
 
 
-def ready(make_window, mics=(), **engine_kw):
+def ready(make_window, mics=(), outputs=None, **engine_kw):
     engine = FakeEngine(**engine_kw)
-    win = make_window(engine, mics=mics)
+    win = make_window(engine, mics=mics, **({"outputs": outputs} if outputs else {}))
     pump(win, lambda: win.speak_btn.instate(["!disabled"]))
     return win, engine
 
@@ -333,3 +333,116 @@ def test_an_error_from_a_replaced_run_leaves_the_new_run_alone(make_window):
     pump(win, lambda: time.monotonic() > settle)
     assert win.pass_var.get() is True and win.passthrough.running
     assert not win.tts_status_var.get().startswith(app.PASS_ERROR)
+
+
+# ---------------------------------------------------------------- polish (N7)
+
+def test_status_shows_which_piece_is_speaking(make_window):
+    win, _ = ready(make_window, piece_s=0.4)
+    win.tts_text.insert("end", PARAGRAPH)                         # 3 pieces
+    win.tts_toggle()
+    seen = set()
+
+    def watch():
+        seen.add(win.tts_status_var.get())
+        return win.tts_status_var.get() == "Narration complete."
+
+    pump(win, watch, timeout=5)
+    assert {"Speaking 1/3…", "Speaking 2/3…", "Speaking 3/3…"} <= seen
+
+
+def press_ctrl_enter(win, release=True):
+    """Call the key handlers directly: Tk drops generated key events unless the window has
+    the desktop's keyboard focus, and taking it (focus_force) would steal it from the user
+    on every verify run. test_ctrl_enter_is_bound checks the bindings themselves."""
+    assert win._speak_key(None) == "break", "\"break\" stops Tk's own newline"
+    if release:
+        win._speak_key_released(None)
+
+
+def test_ctrl_enter_is_bound_in_the_narration_box(window):
+    assert "_speak_key" in window.tts_text.bind("<Control-Return>")
+    assert "_speak_key_released" in window.tts_text.bind("<KeyRelease-Return>")
+
+
+def test_ctrl_enter_toggles_speak_and_stop(make_window):
+    win, _ = ready(make_window, piece_s=1.0)
+    win.tts_text.insert("end", PARAGRAPH)
+    press_ctrl_enter(win)
+    assert win.speaking
+    press_ctrl_enter(win)
+    assert not win.speaking and win.tts_status_var.get() == "Narration stopped."
+
+
+def test_holding_ctrl_enter_toggles_only_once(make_window):
+    win, _ = ready(make_window, piece_s=1.0)
+    win.tts_text.insert("end", PARAGRAPH)
+    for _ in range(4):                     # Windows key repeat: presses only (even: toggling would end stopped)
+        press_ctrl_enter(win, release=False)
+    assert win.speaking, "a held Ctrl+Enter must act like one button press"
+    win._speak_key_released(None)
+    press_ctrl_enter(win)
+    assert not win.speaking
+
+
+def test_ctrl_enter_does_nothing_while_kokoro_is_missing(make_window):
+    win = make_window(None)
+    pump(win, lambda: win.tts_status_var.get() == app.tts.MISSING_MESSAGE)
+    win.tts_text.insert("end", PARAGRAPH)
+    press_ctrl_enter(win)
+    assert not win.speaking and win.tts_status_var.get() == app.tts.MISSING_MESSAGE
+
+
+def test_after_a_device_error_speak_works_on_another_device(make_window, monkeypatch):
+    headphones = {**SPEAKERS, "index": 9, "name": "Headphones (USB)", "label": "Headphones (USB)"}
+    win, _ = ready(make_window, outputs=(headphones, SPEAKERS, CABLE))
+    real_write = FakeOutput.write
+
+    def unplugged(self, block):
+        if self.name == headphones["label"]:
+            raise OSError("device unplugged")
+        real_write(self, block)
+
+    monkeypatch.setattr(FakeOutput, "write", unplugged)
+    choose_output(win, "me")
+    win.tts_text.insert("end", PARAGRAPH)
+    win.tts_toggle()
+    pump(win, lambda: not win.speaking)
+    assert win.tts_status_var.get().startswith(app.DEVICE_ERROR)
+    win.me_box.current(1)                                          # the user picks the speakers
+    win.me_box.event_generate("<<ComboboxSelected>>")
+    win.tts_toggle()
+    pump(win, lambda: win.tts_status_var.get() == "Narration complete.")
+
+
+@pytest.mark.parametrize("captured, output, warned", [
+    (SPEAKERS, "me", True), (SPEAKERS, "both", True), (SPEAKERS, "others", False),
+    (CABLE, "others", True), (CABLE, "me", False),
+])
+def test_speak_warns_that_live_captions_will_transcribe_it(make_window, captured, output, warned):
+    win, _ = ready(make_window)
+    win.mode_var.set("Live captions (desktop audio)")
+    win.devices = [dict(captured)]                                 # the loopback device Live captions uses
+    win.device_box.config(values=[captured["label"]])
+    win.device_box.current(0)
+    win.transcribing = True                                        # a capture is running
+    choose_output(win, output)
+    win.tts_text.insert("end", PARAGRAPH)
+    win.tts_toggle()
+    assert (app.FEEDBACK_HINT in win.tts_status_var.get()) is warned
+    win.transcribing = False
+    win.tts_toggle()
+
+
+def test_progress_keeps_a_mic_error_visible(make_window):
+    win, _ = ready(make_window, mics=(MIC,), piece_s=0.4)
+    pump(win, lambda: win.passthrough.running)
+    win.tts_text.insert("end", PARAGRAPH)
+    win.tts_toggle()
+    pump(win, lambda: win.tts_status_var.get() == "Speaking 1/3…")
+    win.tts_results.put(("pass_error", win.passthrough.run_id, f"{app.PASS_ERROR}: Microphone: gone"))
+    pump(win, lambda: win.tts_status_var.get().startswith(app.PASS_ERROR))
+    settle = time.monotonic() + 0.6                                # the next piece starts meanwhile
+    pump(win, lambda: time.monotonic() > settle)
+    assert win.tts_status_var.get().startswith(app.PASS_ERROR), "progress erased the mic error"
+    pump(win, lambda: not win.speaking, timeout=5)
