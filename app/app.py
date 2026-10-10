@@ -58,6 +58,7 @@ SPEEDS = ["0.8", "0.9", "1.0", "1.1", "1.25", "1.5"]     # narration speed (spec
 DEVICE_ERROR = "Audio device failed"                     # TTS status only, no dialog (rule 3.3.9)
 OUTPUT_MODES = [("me", "Only me"), ("others", "Only others"), ("both", "Both")]   # playback.MODES
 DEFAULT_OUTPUT = "both"                                  # user decision, 2026-10-10
+PASS_ERROR = "Mic to call stopped"                       # TTS status only, no dialog (N8 rule 3.4)
 CABLE_SETUP = (
     "To let a call hear the narration (Only others / Both):\n\n"
     "1. Install VB-Audio Virtual Cable (free, vb-audio.com/Cable): run the setup as "
@@ -67,9 +68,11 @@ CABLE_SETUP = (
     "3. In Discord, Zoom or Meet, choose \"CABLE Output (VB-Audio Virtual Cable)\" as the "
     "microphone (Meet: ⋮ → Settings → Audio → Microphone; \"Default\" is your real mic). "
     "Restart the browser if CABLE Output isn't listed.\n\n"
-    "Your real microphone then no longer reaches the call. To talk too: Windows Sound "
-    "settings → More sound settings → Recording → your microphone → Properties → Listen → "
-    "tick \"Listen to this device\" and play it through CABLE Input.")
+    "Your voice: the call app now listens to the cable, not your microphone, so Wisper "
+    "sends your microphone into the cable too while \"Send my mic to the call\" is ticked "
+    "(on by default when a cable is found). Pick your microphone under Mic.\n\n"
+    "Use headphones: with speakers, your mic also picks up the narration and the call hears "
+    "it twice.")
 
 LANGUAGES = ["auto", "en", "hi", "es", "fr", "de", "ja", "zh", "ru", "pt", "it", "ko", "ar"]
 
@@ -128,6 +131,7 @@ class App:
         self.tts_jobs = queue.Queue()
         self.tts_results = queue.Queue()  # ("tts_ready", voices) | ("tts_missing"|"tts_load_error", msg)
         #                                   | ("tts_done", gen, stopped) | ("tts_error", gen, msg)
+        #                                   | ("pass_error", run_id, msg)
         self.speaking = False
         self.tts_gen = None               # generation of the narration the UI is showing
         self._narrating_gen = None        # TTS worker only
@@ -137,6 +141,11 @@ class App:
             on_done=lambda stopped: self.tts_results.put(("tts_done", self._narrating_gen, stopped)),
             on_error=lambda msg: self.tts_results.put(("tts_error", self._narrating_gen, msg)))
         self.player = playback.Player(lambda device: playback.PaStream(self.pa, device), self._on_device_error)
+        # N8: the real mic into the cable on its own stream; Windows mixes it with the narration.
+        self.passthrough = playback.Passthrough(
+            lambda device: playback.PaInput(self.pa, device),
+            lambda device: playback.PaStream(self.pa, device, block_s=playback.PASS_BLOCK_S),
+            lambda name, e, run: self.tts_results.put(("pass_error", run, f"{PASS_ERROR}: {name}: {e}")))
 
         root.title("Wisper — local speech-to-text (RX 580 · Vulkan)")
         root.geometry("1440x680")
@@ -202,6 +211,11 @@ class App:
         style.configure("TRadiobutton", background=d["bg"], foreground=d["fg"],
                         indicatorbackground=d["field"], indicatorforeground=d["fg"])
         style.map("TRadiobutton", background=[("active", d["bg"])],
+                  indicatorbackground=[("selected", d["accent"]), ("active", d["border"])])
+
+        style.configure("TCheckbutton", background=d["bg"], foreground=d["fg"],
+                        indicatorbackground=d["field"], indicatorforeground=d["fg"])
+        style.map("TCheckbutton", background=[("active", d["bg"])],
                   indicatorbackground=[("selected", d["accent"]), ("active", d["border"])])
 
         style.configure("TProgressbar", background=d["accent"],
@@ -304,7 +318,7 @@ class App:
         self.tts_outputs = playback.list_outputs(self.pa)
         labels = [d["label"] for d in self.tts_outputs]
         rows = {}
-        for name in ("Me:", "Others:"):
+        for name in ("Me:", "Others:", "Mic:"):
             rows[name] = ttk.Frame(parent, padding=(8, 4, 8, 0))
             rows[name].pack(fill="x")
             ttk.Label(rows[name], text=name, width=7).pack(side="left")
@@ -320,12 +334,46 @@ class App:
         cable = playback.find_virtual_cable(self.tts_outputs)
         if cable is not None:
             self.others_box.current(self.tts_outputs.index(cable))
+
+        # N8: the mic the call should hear (WASAPI, like the outputs; cables are left out).
+        self.mics = playback.list_inputs(self.pa)
+        self.pass_var = tk.BooleanVar(value=cable is not None and bool(self.mics))   # user decision, 2026-10-10
+        self.pass_check = ttk.Checkbutton(rows["Mic:"], text="Send my mic to the call", variable=self.pass_var,
+                                          command=self._on_passthrough_change)
+        self.pass_check.pack(side="right")
+        self.mic_box = ttk.Combobox(rows["Mic:"], values=[d["label"] for d in self.mics], state="readonly",
+                                    width=20)
+        self.mic_box.pack(side="left", padx=4, fill="x", expand=True)
+        if self.mics:
+            self.mic_box.current(0)       # list_sources puts the Windows default first
+        self.mic_box.bind("<<ComboboxSelected>>", lambda e: self._update_passthrough())
+        self.others_box.bind("<<ComboboxSelected>>", lambda e: self._update_passthrough(), add="+")
         self._on_output_change()
+        self._update_passthrough()
 
     def _on_output_change(self):
-        """Others is only used by Only others and Both; a mode change stops (rule 3.3.5)."""
-        self.others_box.config(state="disabled" if self.output_var.get() == "me" else "readonly")
+        """A mode change stops the narration (rule 3.3.5)."""
+        self._update_others_state()
         self.tts_stop()
+
+    def _on_passthrough_change(self):
+        self._update_others_state()
+        self._update_passthrough()
+
+    def _update_others_state(self):
+        """Others is used by Only others, Both and the mic pass-through (N8)."""
+        used = self.output_var.get() != "me" or self.pass_var.get()
+        self.others_box.config(state="readonly" if used else "disabled")
+
+    def _update_passthrough(self):
+        """(Re)start the mic pass-through when it's on and both devices are chosen; else stop it."""
+        self.passthrough.stop()
+        if not self.pass_var.get():
+            return
+        mic = self.mics[self.mic_box.current()] if self.mic_box.current() >= 0 else None
+        cable = self._chosen_output(self.others_box)
+        if mic is not None and cable is not None:
+            self.passthrough.start(mic, cable)
 
     def show_cable_setup(self):
         messagebox.showinfo("How to set up narration into a call", CABLE_SETUP)
@@ -735,6 +783,13 @@ class App:
             elif kind == "tts_load_error":
                 self.tts_status_var.set(payload[0])
                 messagebox.showerror("Wisper", payload[0])
+            elif kind == "pass_error":    # N8 rule 3.4: uncheck, status line, no dialog
+                if payload[0] != self.passthrough.run_id:
+                    continue              # from a run the user already replaced
+                self.pass_var.set(False)
+                self._update_others_state()
+                self.passthrough.stop()
+                self.tts_status_var.set(payload[1])
             elif payload[0] != self.tts_gen or not self.speaking:
                 continue                  # a narration the user already stopped
             elif kind == "tts_done":      # a stopped narration was already ended by tts_stop()
@@ -802,6 +857,7 @@ class App:
         # The TTS worker closes its streams before the PyAudio they belong to goes away; a
         # synthesis in progress (at most ~3 s) isn't waited for beyond this.
         self.tts_worker.join(timeout=1)
+        self.passthrough.close()          # waits for every run: its streams belong to the PyAudio below
         self.pa.terminate()
         self.root.destroy()
 

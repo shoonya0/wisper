@@ -54,7 +54,7 @@ class FakeOutput:
 
     instances = []
 
-    def __init__(self, pa, device):
+    def __init__(self, pa, device, block_s=None):
         self.name, self.rate = device["label"], 24000
         self.realtime = device is not CABLE
         self.blocks = 0
@@ -70,18 +70,49 @@ class FakeOutput:
         self.closed = True
 
 
+class FakeInput:
+    """Stands in for playback.PaInput: 10 ms blocks of 0.1 in real time; raises once failing is set."""
+
+    instances = []
+    failing: Exception | None = None
+
+    def __init__(self, pa, device, block_s=None):
+        self.name, self.rate = device["label"], 24000
+        self.reads = 0
+        self.closed = False
+        FakeInput.instances.append(self)
+
+    def available(self):
+        return 0
+
+    def read(self, frames):
+        if FakeInput.failing is not None:
+            raise FakeInput.failing
+        time.sleep(frames / self.rate)
+        self.reads += 1
+        return np.full(frames, 0.1, dtype=np.float32)
+
+    def close(self):
+        self.closed = True
+
+
 SPEAKERS = {"index": 0, "name": "Speakers", "label": "Speakers", "defaultSampleRate": 24000,
             "maxOutputChannels": 2}
+MIC = {"index": 2, "name": "Microphone (Realtek)", "label": "Microphone (Realtek)", "defaultSampleRate": 24000,
+       "maxInputChannels": 2}
 CABLE = {"index": 1, "name": "CABLE Input (VB-Audio Virtual Cable)",
          "label": "CABLE Input (VB-Audio Virtual Cable)", "defaultSampleRate": 24000, "maxOutputChannels": 2}
 
 
 @pytest.fixture
 def make_window(monkeypatch):
-    """make_window(engine=None, outputs=(SPEAKERS, CABLE)): engine None = Kokoro files missing."""
+    """make_window(engine=None, outputs=(SPEAKERS, CABLE), mics=()): engine None = Kokoro files missing.
+
+    No mics by default, so the mic pass-through (N8) stays off unless a test asks for it.
+    """
     windows = []
 
-    def make(engine=None, outputs=(SPEAKERS, CABLE)):
+    def make(engine=None, outputs=(SPEAKERS, CABLE), mics=()):
         def load():
             if engine is None:
                 raise FileNotFoundError(app.tts.MISSING_MESSAGE)
@@ -90,10 +121,13 @@ def make_window(monkeypatch):
         monkeypatch.setattr(app, "Whisper", FakeWhisper)
         monkeypatch.setattr(app.capture.pyaudio, "PyAudio", FakePyAudio)
         monkeypatch.setattr(app.capture, "list_sources", lambda pa, kind: [])
+        monkeypatch.setattr(app.playback, "list_inputs", lambda pa: [dict(m) for m in mics])
         monkeypatch.setattr(app.tts, "load", load)
         monkeypatch.setattr(app.playback, "list_outputs", lambda pa: list(outputs))
         monkeypatch.setattr(app.playback, "PaStream", FakeOutput)
+        monkeypatch.setattr(app.playback, "PaInput", FakeInput)
         FakeOutput.instances = []
+        FakeInput.instances, FakeInput.failing = [], None
         # No skip on TclError: Wisper is Windows-only, where Tk always has a display, and a
         # skip here once hid a flaky Tcl start-up (see --capture=sys in pyproject.toml).
         root = tk.Tk()
@@ -119,6 +153,7 @@ def make_window(monkeypatch):
         for worker in (win.worker, win.tts_worker):
             worker.join(timeout=5)
             assert not worker.is_alive(), f"{worker.name} didn't stop after on_close()"
+        assert not win.passthrough.running, "the mic pass-through didn't stop after on_close()"
 
 
 @pytest.fixture

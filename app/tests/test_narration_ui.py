@@ -1,5 +1,5 @@
 """Narration wired into the window (spec §3.2, §3.3, §4, §5.3, §5.5; N5, N6): Speak/Stop, Clear,
-output modes and devices, errors.
+output modes and devices, mic pass-through (N8), errors.
 
 Real Tk window and real Narrator/Player, with a fake Kokoro engine and fake output streams
 (conftest.py), so nothing is heard and no model is loaded.
@@ -8,16 +8,16 @@ Real Tk window and real Narrator/Player, with a fake Kokoro engine and fake outp
 import time
 
 import pytest
-from conftest import CABLE, SPEAKERS, FakeEngine, FakeOutput, pump
+from conftest import CABLE, MIC, SPEAKERS, FakeEngine, FakeInput, FakeOutput, pump
 
 import app
 
 PARAGRAPH = "First sentence here. Second one follows. And a third."
 
 
-def ready(make_window, **engine_kw):
+def ready(make_window, mics=(), **engine_kw):
     engine = FakeEngine(**engine_kw)
-    win = make_window(engine)
+    win = make_window(engine, mics=mics)
     pump(win, lambda: win.speak_btn.instate(["!disabled"]))
     return win, engine
 
@@ -250,3 +250,86 @@ def test_how_to_set_up_opens_the_cable_steps(make_window, monkeypatch):
     win.setup_btn.invoke()
     assert len(shown) == 1
     assert "VB-Audio Virtual Cable" in shown[0] and "CABLE Output" in shown[0] and "CABLE Input" in shown[0]
+
+
+# ---------------------------------------------------------------- mic pass-through (N8)
+
+def cable_blocks():
+    return sum(o.blocks for o in FakeOutput.instances if o.name == CABLE["label"])
+
+
+def test_pass_through_is_on_by_default_with_a_cable_and_reaches_the_cable(make_window):
+    win, _ = ready(make_window, mics=(MIC,))
+    assert win.pass_var.get() is True
+    assert list(win.mic_box.cget("values")) == [MIC["label"]] and win.mic_box.get() == MIC["label"]
+    pump(win, lambda: cable_blocks() >= 3)                        # the mic is heard in the call
+    assert win.passthrough.running
+
+
+def test_pass_through_is_off_without_a_cable(make_window):
+    win = make_window(FakeEngine(), outputs=(SPEAKERS,), mics=(MIC,))
+    assert win.pass_var.get() is False
+    assert not win.passthrough.running and not FakeInput.instances
+
+
+def test_unchecking_stops_the_pass_through(make_window):
+    win, _ = ready(make_window, mics=(MIC,))
+    pump(win, lambda: FakeInput.instances and FakeInput.instances[-1].reads)
+    win.pass_check.invoke()
+    assert win.pass_var.get() is False
+    assert not win.passthrough.running and FakeInput.instances[-1].closed
+    win.pass_check.invoke()                                        # and back on
+    pump(win, lambda: win.passthrough.running and FakeInput.instances[-1].reads)
+
+
+def test_only_me_keeps_others_enabled_while_passing_the_mic(make_window):
+    win, _ = ready(make_window, mics=(MIC,))
+    choose_output(win, "me")
+    assert win.others_box.instate(["!disabled"]), "pass-through still needs Others"
+    win.pass_check.invoke()
+    assert win.others_box.instate(["disabled"])
+
+
+def test_changing_the_mic_or_others_restarts_the_pass_through(make_window):
+    win, _ = ready(make_window, mics=(MIC,))
+    pump(win, lambda: FakeInput.instances)
+    for box in (win.mic_box, win.others_box):
+        before = FakeInput.instances[-1]
+        box.event_generate("<<ComboboxSelected>>")
+        assert before.closed and FakeInput.instances[-1] is not before
+        pump(win, lambda: win.passthrough.running)
+
+
+def test_narration_and_the_mic_reach_the_call_together(make_window):
+    win, _ = ready(make_window, mics=(MIC,))
+    win.tts_text.insert("end", PARAGRAPH)
+    win.tts_toggle()
+    pump(win, lambda: win.tts_status_var.get() == "Narration complete.")
+    cable_streams = [o for o in FakeOutput.instances if o.name == CABLE["label"] and o.blocks]
+    assert len(cable_streams) == 2, "one stream for the mic, one for the narration (Windows mixes them)"
+    assert win.passthrough.running, "the mic keeps going after the narration ends"
+
+
+def test_a_mic_error_unchecks_the_box_without_a_dialog(make_window, monkeypatch):
+    win, _ = ready(make_window, mics=(MIC,))
+    dialogs = []
+    monkeypatch.setattr(app.messagebox, "showerror", lambda title, msg: dialogs.append(msg))
+    pump(win, lambda: FakeInput.instances and FakeInput.instances[-1].reads)
+    FakeInput.failing = OSError("mic unplugged")
+    pump(win, lambda: win.pass_var.get() is False)
+    status = win.tts_status_var.get()
+    assert status.startswith(app.PASS_ERROR) and MIC["label"] in status and "mic unplugged" in status
+    assert not win.passthrough.running and dialogs == []
+
+
+def test_an_error_from_a_replaced_run_leaves_the_new_run_alone(make_window):
+    win, _ = ready(make_window, mics=(MIC,))
+    pump(win, lambda: win.passthrough.running)
+    old_run = win.passthrough.run_id
+    win.mic_box.event_generate("<<ComboboxSelected>>")             # restart: a new run
+    assert win.passthrough.run_id != old_run
+    win.tts_results.put(("pass_error", old_run, f"{app.PASS_ERROR}: old mic: gone"))
+    settle = time.monotonic() + 0.3
+    pump(win, lambda: time.monotonic() > settle)
+    assert win.pass_var.get() is True and win.passthrough.running
+    assert not win.tts_status_var.get().startswith(app.PASS_ERROR)

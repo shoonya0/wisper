@@ -1,6 +1,7 @@
 # Wisper: current state (snapshot 2026-10-10)
 
-Snapshot taken at `fa7b764` on `master` (narration N0–N5 merged: PRs #1, #3, #4, #5, #6; File-mode fix PR #2).
+Snapshot taken at `bd5bc9f` on `master` (narration N0–N6 merged: PRs #1, #3, #4, #5, #6, #8; File-mode fix PR #2),
+plus N8 (mic pass-through) on branch `feat/narration-n8` (PR pending).
 One page; update it when an increment lands.
 Claims are marked **VERIFIED** (run or read in code) or **ASSUMED**.
 
@@ -8,11 +9,11 @@ Claims are marked **VERIFIED** (run or read in code) or **ASSUMED**.
 
 | Area | State | Notes |
 |---|---|---|
-| App (3 modes) | ✅ working (ASSUMED: the author's use, not run during setup) | `app/app.py`. Since N1 the window is split: STT on the left, TTS on the right (narration box with Save… / Clear / Copy all, Speak/Stop, voice and speed since N5). The app starts and loads a model on the GPU (VERIFIED by screenshot, N1) |
+| App (3 modes) | ✅ working (ASSUMED: the author's use, not run during setup) | `app/app.py`. Since N1 the window is split: STT on the left, TTS on the right (narration box with Save… / Clear / Copy all, Speak/Stop, voice and speed since N5; Output Only me / Only others / Both and Me / Others devices since N6; Mic + "Send my mic to the call" since N8). The app starts and loads a model on the GPU (VERIFIED by screenshot, N1) |
 | Engine build | ✅ present (VERIFIED) | `whisper.cpp/build/bin/Release/whisper.dll` + `ggml-vulkan.dll`, `GGML_VULKAN=1` in CMakeCache |
 | Models | ✅ present (VERIFIED) | base.en-q5_1, small.en-q5_1, large-v3-turbo-q5_0 in `whisper.cpp/models/` |
-| Narration (TTS) | 🚧 N0–N5 done and merged: Speak/Stop with voice and speed (T-TTS-1…5 passed). N6 (Only me / Only others / Both, default Both) done on branch `feat/narration-n6`: Google Meet heard the narration through VB-Cable (T-MODE-2, 2026-10-10). **Limit:** the call doesn't hear the user's real mic at the same time; N8 (mic pass-through) is next | Kokoro-82M fp32 on the CPU: RTF 0.36–0.40 with 4 threads ([performance.md](./performance.md)); model in `models/kokoro/` |
-| Tests | ✅ 145 fast + 2 slow tests (characterization, architecture, window layout + narration box, file stitching, TTS splitting/voices/engine, playback, narrator, narration UI + output modes) | baseline below |
+| Narration (TTS) | 🚧 N0–N6 done and merged: Speak/Stop with voice and speed (T-TTS-1…5 passed). N6 (Only me / Only others / Both, default Both, PR #8): Google Meet heard the narration through VB-Cable (T-MODE-2, 2026-10-10). N8 (mic pass-through: the call hears the user's voice and the narration together) done on branch `feat/narration-n8`: user checked it in a call and reported it working (2026-10-10) | Kokoro-82M fp32 on the CPU: RTF 0.36–0.40 with 4 threads ([performance.md](./performance.md)); model in `models/kokoro/` |
+| Tests | ✅ 174 fast + 2 slow tests (characterization, architecture, window layout + narration box, file stitching, TTS splitting/voices/engine, playback, narrator, narration UI + output modes + mic pass-through) | baseline below |
 | AI harness | ✅ set up; CI runs on GitHub; guard hook verified live | [`ai-harness-setup.md`](./ai-harness-setup.md) |
 
 ## What a user can do today
@@ -28,11 +29,18 @@ Claims are marked **VERIFIED** (run or read in code) or **ASSUMED**.
   Only others (Others device = the virtual cable, the call's microphone) or **Both**
   (default). CABLE Input is pre-selected as Others when found; **How to set up…** shows
   the steps. Changing the mode or a device while speaking stops the narration.
-  **Verified in Google Meet** (mic = CABLE Output): the call hears the narration. While
-  Meet uses CABLE Output, it **doesn't hear the user's own voice** (N8 fixes this; until
-  then: Windows "Listen to this device" on the real mic, played through CABLE Input). VB-Audio Virtual Cable is installed:
-  `CABLE Input` (output) and `CABLE Output` (microphone for Meet/Zoom/Discord) exist,
-  and `playback.find_virtual_cable` picks `CABLE Input (VB-Audio Virtual Cable)` (VERIFIED).
+  **Verified in Google Meet** (mic = CABLE Output): the call hears the narration.
+- **Mic pass-through (N8, branch `feat/narration-n8`)**: "Send my mic to the call" (on by
+  default when a cable is found) copies the chosen WASAPI mic into the cable, so the call
+  hears the user's voice and the narration together. Measured voice delay to CABLE
+  Output: 125–130 ms, no drift over 20 s. Use headphones (with speakers in Both, the call
+  hears the narration twice). Why it's needed: with Meet's mic set to CABLE Output,
+  Meet hears only the cable, never the real mic; untick it when the call app uses the
+  real mic directly. The Mic list has WASAPI mics only, without cables.
+- **Call setup on this PC**: VB-Audio Virtual Cable is installed: `CABLE Input` (output)
+  and `CABLE Output` (microphone for Meet/Zoom/Discord) exist, and
+  `playback.find_virtual_cable` picks `CABLE Input (VB-Audio Virtual Cable)` (VERIFIED).
+  In Meet: ⋮ → Settings → Audio → Microphone = CABLE Output ("Default" is the real mic).
 
 ## How to build, run, test
 
@@ -68,11 +76,11 @@ Claims are marked **VERIFIED** (run or read in code) or **ASSUMED**.
 - **Fast check:** `node tools/verify.mjs` (ruff check → pyright → pytest, ~6 s). **Full:** `node tools/verify.mjs --full` (adds the `slow` pytest tests: real Kokoro model, ~4 s).
 - **Tests only:** `app\.venv\Scripts\python.exe -m pytest` (config in root `pyproject.toml`).
 
-## Test baseline (after narration N6)
+## Test baseline (after narration N8, branch)
 
 | Suite | Result | Known failures (by name) |
 |---|---|---|
-| pytest fast (`-m "not slow"`, 145 tests: architecture, audio_io, capture segmenter, file stitching, hallucination filter, window layout + narration box, TTS split/voices, playback, narrator, narration UI + output modes) | 145/145 pass (12.4 s) | none |
+| pytest fast (`-m "not slow"`, 174 tests: architecture, audio_io, capture segmenter, file stitching, hallucination filter, window layout + narration box, TTS split/voices, playback, narrator, narration UI + output modes + mic pass-through) | 174/174 pass (16.2 s) | none |
 | pytest slow (`-m slow`, 2 tests: Kokoro voices + "Hello world." synthesis; skipped without `models/kokoro/`) | 2/2 pass (3.4 s) | none |
 | ruff check | 0 findings (after `a1dc6b3` sorted imports) | — |
 | pyright (basic) | 0 errors (`live_transcriber.py` excluded, open decision 1) | — |
@@ -115,6 +123,11 @@ Compare new runs against this list **by test name**.
    default 940×640 the transcript's requested height pushed the status row off the
    window (VERIFIED: `winfo_ismapped()` = 0 on the pre-N1 code). The status row is now
    packed at the bottom before the transcript; `test_window_layout.py` guards it.
+9. **Dictation's device list mixes host APIs**: `capture.list_sources(pa, "mic")` lists
+   MME, DirectSound and WASAPI devices, with `Microsoft Sound Mapper - Input` (MME)
+   first. Found in N8: the pass-through used it at first and its delay grew from 16 to
+   266 ms in 8 s, so N8 uses the WASAPI-only `playback.list_inputs`. Dictation is
+   unchanged (not measured whether it matters there).
 
 ## Possible next steps (from the original README)
 
@@ -142,8 +155,8 @@ Compare new runs against this list **by test name**.
   | N3 `tts.py` engine leaf | done 2026-10-09 (PR #4) |
   | N4 `playback.py` leaf | done 2026-10-09 (PR #5); real-device stop → 34 ms |
   | N5 `narrator.py` + wiring, mode "Only me" | done (PR #6): first sound 0.48 s, stop → silence ≤ 34 ms (silent-stream measurement); manual T-TTS-1…5 passed 2026-10-10 |
-  | N6 "Only others" / "Both" (default Both) | done 2026-10-10 (branch `feat/narration-n6`, 145/145 fast). T-MODE-2 passed in Google Meet once Meet's microphone was set to CABLE Output (Meet's "Default" is the real mic). T-MODE-3/4/5 not reported yet. Wisper → cable round trip: Kokoro sentence peak 0.43 in, 0.44 out of CABLE Output |
-  | **N8 mic pass-through** | **next** (user decision 2026-10-10): the call should hear the user's voice **and** the narration at the same time. Wisper reads the real mic and writes mic + narration (mixed, clipped) into CABLE Input continuously. Spec section first: always-open cable stream, mic → cable latency (target: not noticeable in a call), what happens when Dictation uses the same mic, a pass-through on/off control | VB-Cable installed (2026-10-10); a beep played with `playback.Player` into CABLE Input arrives at CABLE Output 5/5 times, ~0.12–0.18 s later ([performance.md](./performance.md)) |
+  | N6 "Only others" / "Both" (default Both) | done 2026-10-10 (PR #8, 145/145 fast). T-MODE-2 passed in Google Meet once Meet's microphone was set to CABLE Output (Meet's "Default" is the real mic). T-MODE-3/4/5 not reported yet. Wisper → cable round trip: Kokoro sentence peak 0.43 in, 0.44 out of CABLE Output; a beep arrives 5/5 times, ~0.12–0.18 s later ([performance.md](./performance.md)) |
+  | **N8 mic pass-through** | **done** (branch `feat/narration-n8`, 174/174 fast). Spec: [`specs/2026-10-10-mic-passthrough.md`](./specs/2026-10-10-mic-passthrough.md). Windows mixes the mic stream and the narration stream in the cable (VERIFIED), so Wisper has no mixer. On by default with a cable; no ducking (the user uses headphones). Voice delay 125–130 ms ([performance.md](./performance.md)). Manual: user checked it in a call and reported it working (2026-10-10) |
   | N7 polish | after N8 |
-  | Latency (after N6, user goal: lowest possible delay in live calls) | measure the whole chain in a real call first (`optimized-app-research`), then: synthesize while typing, phrase cache, smaller player blocks, smaller VB-Cable buffer |
+  | Latency (after N7, user goal: lowest possible delay in live calls) | measure the whole chain in a real call first (`optimized-app-research`), then: synthesize while typing, phrase cache, smaller player blocks, smaller VB-Cable buffer |
 - Known issue 1 (File mode repeated words) is fixed and merged (PR #2, 2026-10-09).
