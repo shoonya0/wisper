@@ -59,6 +59,7 @@ DEVICE_ERROR = "Audio device failed"                     # TTS status only, no d
 OUTPUT_MODES = [("me", "Only me"), ("others", "Only others"), ("both", "Both")]   # playback.MODES
 DEFAULT_OUTPUT = "both"                                  # user decision, 2026-10-10
 PASS_ERROR = "Mic to call stopped"                       # TTS status only, no dialog (N8 rule 3.4)
+FEEDBACK_HINT = "Live captions will transcribe it too"    # spec §4 "Feedback risk" (N7)
 CABLE_SETUP = (
     "To let a call hear the narration (Only others / Both):\n\n"
     "1. Install VB-Audio Virtual Cable (free, vb-audio.com/Cable): run the setup as "
@@ -131,7 +132,7 @@ class App:
         self.tts_jobs = queue.Queue()
         self.tts_results = queue.Queue()  # ("tts_ready", voices) | ("tts_missing"|"tts_load_error", msg)
         #                                   | ("tts_done", gen, stopped) | ("tts_error", gen, msg)
-        #                                   | ("pass_error", run_id, msg)
+        #                                   | ("tts_progress", gen, i, n) | ("pass_error", run_id, msg)
         self.speaking = False
         self.tts_gen = None               # generation of the narration the UI is showing
         self._narrating_gen = None        # TTS worker only
@@ -139,7 +140,8 @@ class App:
         self.narrator = narrator.Narrator(
             self._tts_synth, self._tts_play, tts.split_sentences,
             on_done=lambda stopped: self.tts_results.put(("tts_done", self._narrating_gen, stopped)),
-            on_error=lambda msg: self.tts_results.put(("tts_error", self._narrating_gen, msg)))
+            on_error=lambda msg: self.tts_results.put(("tts_error", self._narrating_gen, msg)),
+            on_progress=lambda i, n: self.tts_results.put(("tts_progress", self._narrating_gen, i, n)))
         self.player = playback.Player(lambda device: playback.PaStream(self.pa, device), self._on_device_error)
         # N8: the real mic into the cable on its own stream; Windows mixes it with the narration.
         self.passthrough = playback.Passthrough(
@@ -300,6 +302,22 @@ class App:
         # Editable: the user types or pastes the text to narrate.
         self.tts_text = self._make_text_box(parent)
         self.tts_text.bind("<Control-a>", self._select_all)
+        self.tts_text.bind("<Control-Return>", self._speak_key)
+        self.tts_text.bind("<KeyRelease-Return>", self._speak_key_released)
+        self._speak_key_held = False
+
+    def _speak_key(self, event):
+        """Ctrl+Enter follows the Speak/Stop button (rule 3.3.4) and never inserts a newline.
+
+        Held down, Windows repeats the key press (without releases): only the first counts.
+        """
+        if not self._speak_key_held and self.speak_btn.instate(["!disabled"]):
+            self._speak_key_held = True
+            self.tts_toggle()
+        return "break"
+
+    def _speak_key_released(self, event):
+        self._speak_key_held = False
 
     def _build_outputs(self, parent):
         """Output mode and the Me / Others devices (spec §3.2, §4, §5.3; N6)."""
@@ -610,6 +628,13 @@ class App:
         self.speaking = True
         self.speak_btn.config(text="⏹  Stop")
         self.tts_status_var.set("Speaking…")
+        # Loopback hears what plays on its device: if the narration plays there too, Live
+        # captions transcribes it (spec §4 feedback risk).
+        if self.transcribing and SOURCE_KIND.get(self.mode_var.get()) == "loopback":
+            i = self.device_box.current()
+            heard = self.devices[i]["label"] if 0 <= i < len(self.devices) else None
+            if heard in {d["label"] for d in devices if d}:
+                self.tts_status_var.set(f"Speaking… ({FEEDBACK_HINT})")
 
     def tts_stop(self):
         """Stop the narration (Stop, Clear, a voice/speed/mode/device change). Safe when nothing plays."""
@@ -792,6 +817,11 @@ class App:
                 self.tts_status_var.set(payload[1])
             elif payload[0] != self.tts_gen or not self.speaking:
                 continue                  # a narration the user already stopped
+            elif kind == "tts_progress":
+                if not self.tts_status_var.get().startswith("Speaking"):
+                    continue              # keep a message shown meanwhile (e.g. a mic error, N8)
+                hint = f" ({FEEDBACK_HINT})" if FEEDBACK_HINT in self.tts_status_var.get() else ""
+                self.tts_status_var.set(f"Speaking {payload[1]}/{payload[2]}…{hint}")
             elif kind == "tts_done":      # a stopped narration was already ended by tts_stop()
                 self._narration_ended("Narration complete.")
             elif kind == "tts_error":

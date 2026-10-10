@@ -21,14 +21,16 @@ class Narrator:
 
     synth(piece, **options) -> samples; play(samples, stop_event) -> None, returning early
     when stop_event is set and raising on a device error; split(text) -> pieces.
+    on_progress(i, n), optional, runs on the player thread as piece i of n starts playing.
     """
 
-    def __init__(self, synth, play, split, on_done, on_error):
+    def __init__(self, synth, play, split, on_done, on_error, on_progress=None):
         self._synth = synth
         self._play = play
         self._split = split
         self._on_done = on_done
         self._on_error = on_error
+        self._on_progress = on_progress
         self._lock = threading.Lock()
         self._gen = 0
         self._stop = threading.Event()
@@ -69,11 +71,15 @@ class Narrator:
         failure = []
 
         def player():
+            started = 0
             while (samples := ready.get()) is not None:
                 taken.release()
                 if stop.is_set():
                     continue                  # drain without playing
+                started += 1
                 try:
+                    if self._on_progress:
+                        self._on_progress(started, len(pieces))
                     self._play(samples, stop)
                 except Exception as e:
                     failure.append(e)
