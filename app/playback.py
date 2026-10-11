@@ -17,6 +17,7 @@ from scipy.signal import resample_poly
 
 SAMPLE_RATE = 24000      # Kokoro output (tts.SAMPLE_RATE; not imported: leaves stay independent)
 BLOCK_S     = 0.05       # stop latency is about one block
+PAUSE_POLL_S = 0.02      # a paused play() re-checks for stop this often (N9)
 PASS_BLOCK_S       = 0.01   # mic pass-through block: the voice delay Wisper adds is about one block
 MAX_BACKLOG_BLOCKS = 3      # mic frames waiting beyond this are dropped: the delay can't grow
 
@@ -131,9 +132,12 @@ class Player:
 
     start(devices), play() and close() must never overlap: in the app the TTS worker calls
     start/close and the narration-player thread calls play in between (joined before
-    close). stop() is the only call that is safe at any time from another thread (it just
-    sets an Event). Streams stay open
+    close). stop(), pause() and resume() are the only calls that are safe at any time from
+    another thread (they just set or clear an Event). Streams stay open
     between play() calls, so sentences follow each other without reopening devices.
+    pause() (N9) makes play() wait before its next block, with the streams still open, until
+    resume() or stop(); start() leaves the pause alone, so a pause from the UI that races
+    ahead of the worker's start() still holds.
     stream_factory(device) returns an object with name, rate, write(mono_block), close().
     start() clears the stop Event, so a stop() that races ahead of the next start() is lost:
     the narrator must also drop stale work by its own generation id (spec §5.4).
@@ -144,6 +148,8 @@ class Player:
         self._on_error = on_error          # on_error(device_name, exception), called once per failure
         self._block_s = block_s
         self._stop = threading.Event()
+        self._playing = threading.Event()  # cleared while paused
+        self._playing.set()
         self._devices = []
         self._streams = []
 
@@ -159,6 +165,16 @@ class Player:
     @property
     def stopped(self):
         return self._stop.is_set()
+
+    def pause(self):
+        self._playing.clear()
+
+    def resume(self):
+        self._playing.set()
+
+    @property
+    def paused(self):
+        return not self._playing.is_set()
 
     def play(self, samples, src_rate=SAMPLE_RATE):
         """Play samples to the end on every device. False if stopped or a device failed."""
@@ -177,6 +193,8 @@ class Player:
         tracks = [(s, np.pad(a, (0, n_blocks * f - len(a))), f) for s, a, f in tracks]
 
         for i in range(n_blocks):
+            while not self._playing.wait(PAUSE_POLL_S) and not self._stop.is_set():
+                pass                      # paused: i is where the narration resumes
             if self._stop.is_set():
                 self.close()
                 return False

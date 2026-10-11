@@ -2,7 +2,7 @@
 
 import pytest
 
-from tts import FIRST_CHUNK_WORDS, MAX_CHARS, split_sentences
+from tts import FIRST_CHUNK_WORDS, MAX_CHARS, piece_spans, split_sentences
 
 LONG_CLAUSES = ", ".join(f"clause number {i} keeps going with a few more words" for i in range(14))  # ~700 chars
 LONG_WORDS = " ".join(f"word{i}" for i in range(110))                                                   # ~700 chars
@@ -119,3 +119,31 @@ def test_round_trip_keeps_every_word_in_order(text):
     pieces = split_sentences(text)
     assert " ".join(pieces).split() == text.split()
     assert all(p == p.strip() and p for p in pieces)
+
+
+# ---------------------------------------------------------------- piece_spans (N10)
+
+@pytest.mark.parametrize("text", [
+    "Hi. How are you? Fine!",
+    "  Leading spaces.   Two  spaces\tand a tab.  ",
+    "Title\n\nBody text.\nSecond line of the body.",
+    "नमस्ते। आप कैसे हैं?",
+    "Emoji 😀 here. 👍🏽 Then more!",
+    "Hi everyone, thanks for joining the call today, let me walk you through it.",
+    "Start. " + LONG_CLAUSES,
+    f"{SIXTEEN}. {SIXTEEN}.",
+])
+def test_piece_spans_cover_each_piece_in_order(text):
+    pieces, spans = split_sentences(text), piece_spans(text)
+    assert spans is not None and len(spans) == len(pieces)
+    assert [text[a:b].split() for a, b in spans] == [p.split() for p in pieces]
+    assert all(text[a] != " " and text[b - 1] != " " for a, b in spans), "spans start and end on a word"
+    assert all(b1 <= a2 for (_, b1), (a2, _) in zip(spans, spans[1:], strict=False)), "in order, never overlapping"
+
+
+def test_piece_spans_of_empty_text():
+    assert piece_spans("") == [] and piece_spans("  \n ") == []
+
+
+def test_piece_spans_exact_offsets():
+    assert piece_spans("Hi. How are you?") == [(0, 3), (4, 16)]

@@ -238,6 +238,63 @@ def test_stop_from_another_thread_silences_both_devices_within_a_block():
     assert not errors
 
 
+def play_in_thread(player, samples):
+    result = []
+    thread = threading.Thread(target=lambda: result.append(player.play(samples)))
+    thread.start()
+    return thread, result
+
+
+def test_pause_writes_nothing_and_resume_continues_from_the_next_block():
+    # N9 (spec 2026-10-11-narration-pause.md, P1 and P2).
+    me, others = at_24k("me", 0), at_24k("others", 1)
+    player, streams, errors = make_player(me={"realtime": True})
+    player.start([me, others])
+    samples = np.arange(480 * 20, dtype=np.float32)              # 20 blocks of 20 ms
+    thread, result = play_in_thread(player, samples)
+    wait_for(lambda: streams and len(streams[0].writes) >= 3)
+    player.pause()
+    assert player.paused
+    time.sleep(2 * BLOCK_S)                                       # the block in progress finishes
+    paused_at = [len(s.writes) for s in streams]
+    time.sleep(0.2)
+    assert [len(s.writes) for s in streams] == paused_at, "a block was written while paused"
+    assert paused_at[0] < 20 and thread.is_alive()
+    player.resume()
+    thread.join(timeout=2)
+    assert result == [True] and not player.paused
+    for s in streams:                                             # nothing repeated or skipped
+        assert np.array_equal(np.concatenate(s.writes), samples)
+    assert not errors
+
+
+def test_stop_while_paused_returns_at_once_and_closes_the_streams():
+    player, streams, _ = make_player(me={"realtime": True})
+    player.start([at_24k("me", 0)])
+    thread, result = play_in_thread(player, np.ones(480 * 20, dtype=np.float32))
+    wait_for(lambda: streams and streams[0].writes)
+    player.pause()
+    time.sleep(0.1)
+    stopped = time.perf_counter()
+    player.stop()
+    thread.join(timeout=1)
+    assert result == [False] and time.perf_counter() - stopped < 0.2
+    assert streams[0].closed
+
+
+def test_a_pause_before_start_holds_until_resume():
+    # The UI can pause before the TTS worker calls start(): start() must not undo it.
+    player, streams, _ = make_player()
+    player.pause()
+    player.start([at_24k("me", 0)])
+    thread, result = play_in_thread(player, np.ones(480 * 2, dtype=np.float32))
+    time.sleep(0.1)
+    assert not any(s.writes for s in streams) and thread.is_alive()
+    player.resume()
+    thread.join(timeout=1)
+    assert result == [True] and len(streams[0].writes) == 2
+
+
 def test_play_after_stop_does_nothing_until_the_next_start():
     player, streams, _ = make_player()
     player.start([at_24k("me", 0)])

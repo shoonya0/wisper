@@ -109,6 +109,23 @@ def split_sentences(text):
     return [" ".join(p) for p in pieces if p]
 
 
+def piece_spans(text):
+    """(start, end) offsets in text of each split_sentences(text) piece (N10), or None.
+
+    The splitter is word-based, so each piece is a run of whole words of text: count them off.
+    None means the pieces don't match the words (then the app marks nothing).
+    """
+    words = list(re.finditer(r"\S+", text))
+    spans, i = [], 0
+    for piece in split_sentences(text):
+        n = len(piece.split())
+        if [m.group() for m in words[i:i + n]] != piece.split():
+            return None
+        spans.append((words[i].start(), words[i + n - 1].end()))
+        i += n
+    return spans if i == len(words) else None
+
+
 # ------------------------------------------------------------------ engine
 
 def missing_files(model_dir=MODEL_DIR):

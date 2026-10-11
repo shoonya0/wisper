@@ -10,7 +10,7 @@ Fast, fully offline speech-to-text on an **AMD Radeon RX 580**, running
 It also speaks: the right-hand pane reads typed or pasted text aloud with **Kokoro-82M**
 (offline, on the CPU), to yourself, into a call (Meet, Zoom, Discord) through a virtual
 cable, or both. With "Send my mic to the call", the call hears your voice and the
-narration together. Ctrl+Enter speaks or stops. Setup: `_docs/current-state.md`.
+narration together. Speak, Pause and Resume share one button (Ctrl+Enter), and Stop ends the narration. Setup: `_docs/current-state.md`.
 
 ## Run
 
