@@ -30,6 +30,14 @@ def is_descendant(widget, ancestor):
     return str(widget).startswith(str(ancestor) + ".")
 
 
+def test_starts_in_live_captions_with_small_en_and_af_heart_at_1_0(window):
+    # User decision 2026-10-11: these are the start-up defaults (output Both: test_narration_ui).
+    assert window.mode_var.get() == "Live captions (desktop audio)"
+    assert window.model_var.get() == "small.en — balanced"
+    assert window.voice_var.get() == "af_heart"
+    assert window.speed_var.get() == "1.0"
+
+
 def test_speech_to_text_left_text_to_speech_right(window):
     stt, tts = panes_of(window)
     for w in (window.start_btn, window.model_box, window.lang_box, window.text, window.level_bar):

@@ -50,7 +50,7 @@ def list_sources(pa, kind):
     """
     if kind == "loopback":
         devices = list(pa.get_loopback_device_info_generator())
-        default_idx = _default_index(pa, output=True)
+        default_idx = _default_loopback_index(pa)
     else:
         devices = _input_devices(pa)
         default_idx = _default_index(pa, output=False)
@@ -76,6 +76,14 @@ def _input_devices(pa):
         seen.add(name)
         out.append(d)
     return out
+
+
+def _default_loopback_index(pa):
+    # The loopback twin of the default speakers has its own index, not defaultOutputDevice's.
+    try:
+        return pa.get_default_wasapi_loopback()["index"]
+    except (OSError, LookupError):
+        return -1
 
 
 def _default_index(pa, output):

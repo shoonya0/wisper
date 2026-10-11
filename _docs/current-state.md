@@ -19,8 +19,8 @@ Claims are marked **VERIFIED** (run or read in code) or **ASSUMED**.
 ## What a user can do today
 
 - **Dictation**: transcribe the microphone as they speak (low latency, `small.en` default).
-- **Live captions**: transcribe desktop/meeting audio via WASAPI loopback
-  (`large-v3-turbo` default).
+- **Live captions** (the start-up mode): transcribe desktop/meeting audio via WASAPI
+  loopback (`small.en` default; the Windows default speakers are pre-selected).
 - **File**: transcribe WAV/MP3/FLAC/OGG with progressive text (`large-v3-turbo` default).
 - Choose model (fastest ↔ most accurate) and language; Copy all / Save… / Clear.
 - **Narration box** (right pane): type or paste text; its own Copy all / Save… / Clear.

@@ -40,9 +40,10 @@ MODELS = [
 MODEL_BY_LABEL = {label: (MODEL_DIR / fn, en_only) for label, fn, en_only in MODELS}
 
 MODES = ["Dictation (microphone)", "Live captions (desktop audio)", "File"]
+DEFAULT_MODE = "Live captions (desktop audio)"           # user decision, 2026-10-11
 DEFAULT_MODEL = {
     "Dictation (microphone)": "small.en — balanced",
-    "Live captions (desktop audio)": "large-v3-turbo — most accurate",
+    "Live captions (desktop audio)": "small.en — balanced",   # user decision, 2026-10-11
     "File": "large-v3-turbo — most accurate",
 }
 PROFILE = {
@@ -410,7 +411,7 @@ class App:
         self.start_btn.pack(side="left")
 
         ttk.Label(bar, text="  Mode:").pack(side="left")
-        self.mode_var = tk.StringVar(value=MODES[0])
+        self.mode_var = tk.StringVar(value=DEFAULT_MODE)
         mode_box = ttk.Combobox(bar, textvariable=self.mode_var, values=MODES,
                                 state="readonly", width=24)
         mode_box.pack(side="left", padx=4)
