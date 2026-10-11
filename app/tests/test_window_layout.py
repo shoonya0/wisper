@@ -148,7 +148,7 @@ def test_every_tts_control_visible_at_minimum_window_size(window):
     root.update()
     _, tts = panes_of(window)
     buttons = [b for f in tts.winfo_children() for b in f.winfo_children() if b.winfo_class() == "TButton"]
-    assert len(buttons) == 5, "Speak, How to set up…, Save…, Clear, Copy all"
+    assert len(buttons) == 6, "Speak, Stop, How to set up…, Save…, Clear, Copy all"
     controls = [window.tts_text, window.voice_box, window.speed_box, *buttons,
                 *window.output_radios, window.me_box, window.others_box, window.mic_box, window.pass_check]
     cut = [str(w) for w in controls if not inside(w, tts)]

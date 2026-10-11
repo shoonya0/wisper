@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | In progress: N0 (spike) and N1 (split window) done 2026-10-07, N2 (narration box), N3 (`tts.py`), N4 (`playback.py`) done 2026-10-09; N5 (narrator + wiring, "Only me") done 2026-10-10 (T-TTS-1…5 passed); N6 ("Only others" / "Both", default Both) done 2026-10-10 (T-MODE-2 passed in Google Meet); N8 (mic pass-through) and N7 (polish) done 2026-10-10 (T-ERR-2 deferred); next: latency |
+| Status | In progress: N0 (spike) and N1 (split window) done 2026-10-07, N2 (narration box), N3 (`tts.py`), N4 (`playback.py`) done 2026-10-09; N5 (narrator + wiring, "Only me") done 2026-10-10 (T-TTS-1…5 passed); N6 ("Only others" / "Both", default Both) done 2026-10-10 (T-MODE-2 passed in Google Meet); N8 (mic pass-through) and N7 (polish) done 2026-10-10 (T-ERR-2 deferred); N9 (pause and resume) 2026-10-11, spec [`2026-10-11-narration-pause.md`](./2026-10-11-narration-pause.md); next: latency |
 | Date | 2026-10-07 |
 | Owner | shoonya0 |
 | Test plan | [`_docs/test/kokoro-narration.md`](../test/kokoro-narration.md) |
@@ -77,7 +77,8 @@ or to both.
 
 | Control | Behavior |
 |---|---|
-| **Speak / Stop** button (accent) | Speak: reads the whole box from the start. While speaking, the label changes to "⏹ Stop". Disabled while the Kokoro model is loading or missing. An empty box: rule 3.3.7 |
+| **Speak / Pause / Resume** button (accent) | Speak: reads the whole box from the start. While speaking, the label changes to "⏸ Pause", and while paused to "▶ Resume" (N9, [`2026-10-11-narration-pause.md`](./2026-10-11-narration-pause.md); until N9 it was "⏹ Stop"). Disabled while the Kokoro model is loading or missing. An empty box: rule 3.3.7 |
+| **Stop** button (N9) | Ends the narration, playing or paused; the next Speak starts over. Enabled only during a narration |
 | Voice | Kokoro voices from `voices-v1.0.bin`, grouped by language prefix (`af_`/`am_` = US English, `bf_`/`bm_` = UK English, `e`, `f`, `h`, `i`, `p`). Default `af_heart` (VERIFIED present among the 54 voices; how it sounds is checked in T-TTS-1). The language passed to Kokoro is derived from the voice prefix |
 | Speed | 0.8 / 0.9 / 1.0 / 1.1 / 1.25 / 1.5. Default 1.0 |
 | Output | Radio buttons: Only me · Only others · Both. **Default Both** (user decision, 2026-10-10). Without a detected cable, Both still is the default and Speak shows the §5.3 message until an Others device is chosen |
@@ -88,7 +89,7 @@ or to both.
 | Clear | Empties the box **and stops any narration in progress** |
 | Copy all | Copies the box text to the clipboard and shows "Copied narration text to clipboard." |
 
-Keyboard: `Ctrl+Enter` in the narration box = Speak/Stop. `Ctrl+A` selects all, as in
+Keyboard: `Ctrl+Enter` in the narration box follows the main button (Speak / Pause / Resume since N9). `Ctrl+A` selects all, as in
 the transcript box.
 
 ### 3.3 Narration behavior rules
@@ -100,8 +101,9 @@ the transcript box.
    drops the sentences that haven't played, and throws away any synthesis that finishes
    afterwards. The status line shows "Narration stopped." Then the box is emptied.
 3. **Stop** does the same as rule 2 but keeps the text.
-4. **Speak while speaking** isn't possible, because the button is Stop while speaking.
-   `Ctrl+Enter` follows the button.
+4. **Speak while speaking** isn't possible, because the button is Pause (or Resume) while
+   speaking (N9). `Ctrl+Enter` follows the button. While paused, rules 3.3.1 to 3.3.5 still
+   hold: a setting change stops, an edit of the text doesn't.
 5. Changing the output mode, a device, the voice or the speed **while speaking** stops the
    narration. The new setting applies to the next Speak. This keeps v1 simple.
 6. **Sentence streaming**: the text is split into sentences (§5.2), and sentence *k + 1* is
@@ -292,6 +294,7 @@ the UI. Moving Kokoro to the GPU is not a fallback (§5.1).
 | **N6** | **Modes "Only others" and "Both"** (default Both) | Output radio buttons; Me and Others device pickers; cable auto-select; "How to set up…" dialog; changing mode or device stops the narration (rule 3.3.5) | `test_playback.py` already covers mode → targets with / without an Others device and a 2-stream stop (N4). `test_narration_ui.py` += default Both with the cable pre-selected; Both plays on both devices; Only others plays only on the cable; Only me disables Others; no cable → nothing pre-selected and Speak shows the §5.3 message; mode and device changes stop; How to set up… opens the steps. `test_window_layout.py`: the new controls fit at the minimum size | AC3, AC4 manual with a real call app |
 | **N7** | **Polish** | `Ctrl+Enter`; status "Speaking 3/12…"; device-unplugged handling (rule 3.3.9); the Live captions feedback note in the UI help. **As built:** `Narrator(on_progress=…)` on the player thread as each piece starts; Ctrl+Enter returns "break" (no newline), does nothing while Speak is disabled, and a held key counts once until it is released; progress only replaces a "Speaking…" status (other messages, e.g. a mic error, stay); the feedback note is a status hint at Speak when Live captions' loopback device is one the narration plays on; rule 3.3.9 was already met in N5 | `test_narrator.py` += progress 1..n before each piece plays, none after stop, optional; `test_playback.py` write error mid-stream already covered in N4 (`fail_on=2`); `test_narration_ui.py` += progress in the status, progress keeps a mic error, Ctrl+Enter bound / toggles / held = once / nothing with Kokoro missing, Speak works on another device after a device error, feedback hint × 5 device and mode cases | T-ERR-2, T-KEY-1 manual |
 | **N8** *(done 2026-10-10, spec [`2026-10-10-mic-passthrough.md`](./2026-10-10-mic-passthrough.md))* | **Mic pass-through** into the cable, so the user can talk *and* narrate in one call | `playback.py` mixer: real mic → cable plus narration (mix and clip) | mixer sum/clip unit tests | the call hears my voice and the narration at the same time (Meet test). Needs its own spec section first (continuous cable stream, mic → cable latency, behavior while Dictation uses the same mic) |
+| **N9** *(2026-10-11, spec [`2026-10-11-narration-pause.md`](./2026-10-11-narration-pause.md))* | **Pause and resume** | `Player.pause/resume` (play waits between blocks, streams open); main button Speak → Pause → Resume; a Stop button | `test_playback.py` += 3, `test_narration_ui.py` += 10 | T-PAUSE-1, T-PAUSE-2 |
 
 After N7: update `current-state.md` (what a user can do), `architecture-overview.md`
 (diagram, module table, threads, layer table) and the README feature list.

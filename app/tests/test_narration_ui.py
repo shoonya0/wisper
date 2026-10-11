@@ -42,7 +42,7 @@ def test_speak_reads_every_sentence_in_order_then_completes(make_window):
     win.voice_var.set("bf_emma")
     win.speed_var.set("1.25")
     win.tts_toggle()
-    assert win.speak_btn.cget("text") == "⏹  Stop"
+    assert win.speak_btn.cget("text") == "⏸  Pause"
     pump(win, lambda: win.tts_status_var.get() == "Narration complete.")
     assert win.speak_btn.cget("text") == "🔊  Speak"
     spoken = [text for text, _, _ in engine.calls[1:]]          # calls[0] is the warm-up
@@ -83,7 +83,7 @@ def test_stop_keeps_the_text_and_a_new_speak_starts_over(make_window):
     win.tts_text.insert("end", PARAGRAPH)
     win.tts_toggle()
     pump(win, lambda: any(o.blocks for o in FakeOutput.instances))
-    win.tts_toggle()                                              # the button is Stop now
+    win.stop_btn.invoke()
     assert win.tts_text.get("1.0", "end-1c") == PARAGRAPH
     assert win.tts_status_var.get() == "Narration stopped."
     first = len(engine.calls)
@@ -92,8 +92,8 @@ def test_stop_keeps_the_text_and_a_new_speak_starts_over(make_window):
     assert engine.calls[first][0].startswith("First"), "a new Speak reads from the beginning"
     settle = time.monotonic() + 0.3     # the first narration's late "done" arrives meanwhile ...
     pump(win, lambda: time.monotonic() > settle)
-    assert win.speaking and win.speak_btn.cget("text") == "⏹  Stop", "... and must not end this one"
-    win.tts_toggle()
+    assert win.speaking and win.speak_btn.cget("text") == "⏸  Pause", "... and must not end this one"
+    win.tts_stop()
 
 
 def test_changing_the_voice_while_speaking_stops(make_window):
@@ -365,24 +365,28 @@ def test_ctrl_enter_is_bound_in_the_narration_box(window):
     assert "_speak_key_released" in window.tts_text.bind("<KeyRelease-Return>")
 
 
-def test_ctrl_enter_toggles_speak_and_stop(make_window):
+def test_ctrl_enter_follows_the_button_speak_pause_resume(make_window):
     win, _ = ready(make_window, piece_s=1.0)
     win.tts_text.insert("end", PARAGRAPH)
     press_ctrl_enter(win)
-    assert win.speaking
+    assert win.speaking and not win.tts_paused
     press_ctrl_enter(win)
-    assert not win.speaking and win.tts_status_var.get() == "Narration stopped."
+    assert win.tts_paused and win.speak_btn.cget("text") == "▶  Resume"
+    press_ctrl_enter(win)
+    assert win.speaking and not win.tts_paused
+    win.tts_stop()
 
 
 def test_holding_ctrl_enter_toggles_only_once(make_window):
     win, _ = ready(make_window, piece_s=1.0)
     win.tts_text.insert("end", PARAGRAPH)
-    for _ in range(4):                     # Windows key repeat: presses only (even: toggling would end stopped)
+    for _ in range(4):                     # Windows key repeat: presses only (even: toggling would end paused)
         press_ctrl_enter(win, release=False)
-    assert win.speaking, "a held Ctrl+Enter must act like one button press"
+    assert win.speaking and not win.tts_paused, "a held Ctrl+Enter must act like one button press"
     win._speak_key_released(None)
     press_ctrl_enter(win)
-    assert not win.speaking
+    assert win.tts_paused
+    win.tts_stop()
 
 
 def test_ctrl_enter_does_nothing_while_kokoro_is_missing(make_window):
@@ -446,3 +450,116 @@ def test_progress_keeps_a_mic_error_visible(make_window):
     pump(win, lambda: time.monotonic() > settle)
     assert win.tts_status_var.get().startswith(app.PASS_ERROR), "progress erased the mic error"
     pump(win, lambda: not win.speaking, timeout=5)
+
+
+# ---------------------------------------------------------------- pause / resume (N9)
+
+def blocks_played():
+    return sum(o.blocks for o in FakeOutput.instances)
+
+
+def speaking_paragraph(make_window, piece_s=1.0):
+    win, engine = ready(make_window, piece_s=piece_s)
+    win.tts_text.insert("end", PARAGRAPH)
+    win.tts_toggle()
+    pump(win, lambda: blocks_played() > 0)                       # audio is playing
+    return win, engine
+
+
+def test_stop_is_enabled_only_during_a_narration(make_window):
+    win, _ = ready(make_window, piece_s=1.0)
+    assert win.stop_btn.instate(["disabled"])
+    win.tts_text.insert("end", PARAGRAPH)
+    win.tts_toggle()
+    assert win.stop_btn.instate(["!disabled"])
+    win.tts_toggle()                                              # paused: Stop still works
+    assert win.stop_btn.instate(["!disabled"])
+    win.stop_btn.invoke()
+    assert win.stop_btn.instate(["disabled"])
+    assert win.speak_btn.cget("text") == "🔊  Speak" and win.tts_status_var.get() == "Narration stopped."
+
+
+def test_pause_silences_and_resume_finishes_the_narration(make_window):
+    win, engine = speaking_paragraph(make_window, piece_s=0.5)
+    win.tts_toggle()
+    assert win.tts_paused and win.speak_btn.cget("text") == "▶  Resume"
+    settle = time.monotonic() + 0.1                               # the block in progress finishes
+    pump(win, lambda: time.monotonic() > settle)
+    paused_at = blocks_played()
+    settle = time.monotonic() + 0.4
+    pump(win, lambda: time.monotonic() > settle)
+    assert blocks_played() == paused_at, "audio kept playing while paused"
+    assert win.speaking and not any(o.closed for o in FakeOutput.instances), "streams stay open"
+    win.tts_toggle()
+    assert not win.tts_paused and win.speak_btn.cget("text") == "⏸  Pause"
+    pump(win, lambda: win.tts_status_var.get() == "Narration complete.", timeout=5)
+    spoken = [text for text, _, _ in engine.calls[1:]]
+    assert " ".join(spoken).split() == PARAGRAPH.split(), "every sentence once, none repeated"
+    # Default Both: 3 pieces of 0.5 s in 50 ms blocks on each device, none repeated or skipped.
+    assert [o.blocks for o in FakeOutput.instances] == [3 * 10, 3 * 10]
+
+
+def test_paused_status_keeps_the_progress(make_window):
+    win, _ = speaking_paragraph(make_window)
+    pump(win, lambda: win.tts_status_var.get() == "Speaking 1/3…")
+    win.tts_toggle()
+    assert win.tts_status_var.get() == "Paused 1/3."
+    win.tts_toggle()
+    assert win.tts_status_var.get() == "Speaking 1/3…"
+    win.tts_stop()
+
+
+@pytest.mark.parametrize("change", ["voice", "speed", "mode"])
+def test_a_setting_change_while_paused_stops(make_window, change):
+    win, _ = speaking_paragraph(make_window)
+    win.tts_toggle()
+    if change == "mode":
+        choose_output(win, "me")
+    else:
+        box, var, value = ((win.voice_box, win.voice_var, "hf_alpha") if change == "voice"
+                           else (win.speed_box, win.speed_var, "1.5"))
+        var.set(value)
+        box.event_generate("<<ComboboxSelected>>")
+    assert not win.speaking and not win.tts_paused
+    assert win.tts_status_var.get() == "Narration stopped."
+    pump(win, lambda: all(o.closed for o in FakeOutput.instances), timeout=0.25)
+
+
+def test_editing_the_text_while_paused_resumes_the_old_snapshot(make_window):
+    win, engine = speaking_paragraph(make_window, piece_s=0.3)
+    win.tts_toggle()
+    win.tts_text.delete("1.0", "end")
+    win.tts_text.insert("end", "Something else entirely.")
+    assert win.tts_paused
+    win.tts_toggle()
+    pump(win, lambda: win.tts_status_var.get() == "Narration complete.", timeout=5)
+    assert " ".join(text for text, _, _ in engine.calls[1:]).split() == PARAGRAPH.split()
+
+
+def test_clear_while_paused_stops_and_a_new_speak_is_not_paused(make_window):
+    win, _ = speaking_paragraph(make_window)
+    win.tts_toggle()
+    win.tts_clear()
+    assert not win.speaking and win.tts_text.get("1.0", "end-1c") == ""
+    pump(win, lambda: all(o.closed for o in FakeOutput.instances), timeout=0.25)
+    win.tts_text.insert("end", "One more.")
+    win.tts_toggle()
+    pump(win, lambda: win.tts_status_var.get() == "Narration complete.", timeout=3)
+
+
+def test_progress_while_paused_updates_the_paused_status(make_window):
+    # Review finding: a Pause during piece 1's last block, then piece 2 starts and waits.
+    win, _ = speaking_paragraph(make_window)
+    win.tts_toggle()
+    win.tts_results.put(("tts_progress", win.tts_gen, 2, 3))
+    pump(win, lambda: win.tts_status_var.get() == "Paused 2/3.", timeout=1)
+    win.tts_toggle()
+    assert win.tts_status_var.get() == "Speaking 2/3…"
+    win.tts_stop()
+
+
+def test_closing_the_app_while_paused_ends_the_workers(make_window):
+    # Spec §3: the fixture's teardown calls on_close() and asserts the workers stopped.
+    win, _ = speaking_paragraph(make_window)
+    win.tts_toggle()
+    assert win.tts_paused
