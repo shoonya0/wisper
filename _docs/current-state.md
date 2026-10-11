@@ -47,8 +47,9 @@ Claims are marked **VERIFIED** (run or read in code) or **ASSUMED**.
 
 ## How to build, run, test
 
-- **Run:** `app\run.bat` (uses `app\.venv\Scripts\pythonw.exe`), or
-  `cd app` then `.venv\Scripts\python.exe app.py` to see tracebacks.
+- **Run:** `cd app` then `.venv\Scripts\pythonw.exe app.py` (no console), or
+  `.venv\Scripts\python.exe app.py` to see tracebacks. `app\run.bat` runs the same
+  `pythonw` command but doesn't start the app (reported 2026-10-11, cause not found yet).
 - **Setup (fresh clone):** `py -3.12 -m venv app\.venv`, then
   `app\.venv\Scripts\python.exe -m pip install -r app\requirements-dev.txt`. The venv
   is Python 3.12.10 (VERIFIED).

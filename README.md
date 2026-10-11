@@ -15,8 +15,11 @@ narration together. Ctrl+Enter speaks or stops. Setup: `_docs/current-state.md`.
 ## Run
 
 ```bat
-app\run.bat
+cd app
+.venv\Scripts\pythonw.exe app.py
 ```
+
+To see error messages (tracebacks), run `.venv\Scripts\python.exe app.py` instead.
 
 Pick a **Mode** and a **Model** (fastest ↔ most accurate), select a device or file, and
 press **Start**.
