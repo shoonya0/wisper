@@ -16,7 +16,7 @@ are no per-area `_docs/` folders. `whisper.cpp/` is upstream code and isn't docu
 
 | Feature | Spec | Test plan | Decisions |
 |---|---|---|---|
-| Narration (Kokoro-82M TTS) | [specs/2026-10-07-kokoro-narration.md](./specs/2026-10-07-kokoro-narration.md); N8 mic pass-through: [specs/2026-10-10-mic-passthrough.md](./specs/2026-10-10-mic-passthrough.md); N9 pause and resume: [specs/2026-10-11-narration-pause.md](./specs/2026-10-11-narration-pause.md) | [test/kokoro-narration.md](./test/kokoro-narration.md) | [adr/0001-tts-engine-kokoro-onnx.md](./adr/0001-tts-engine-kokoro-onnx.md) |
+| Narration (Kokoro-82M TTS) | [specs/2026-10-07-kokoro-narration.md](./specs/2026-10-07-kokoro-narration.md); N8 mic pass-through: [specs/2026-10-10-mic-passthrough.md](./specs/2026-10-10-mic-passthrough.md); N9 pause and resume: [specs/2026-10-11-narration-pause.md](./specs/2026-10-11-narration-pause.md); N10 narrated marks: [specs/2026-10-11-narration-highlight.md](./specs/2026-10-11-narration-highlight.md) | [test/kokoro-narration.md](./test/kokoro-narration.md) | [adr/0001-tts-engine-kokoro-onnx.md](./adr/0001-tts-engine-kokoro-onnx.md) |
 
 ## Where new docs go
 

@@ -138,6 +138,8 @@ class App:
         self.tts_paused = False           # N9: spec 2026-10-11-narration-pause.md
         self._tts_progress = ""           # " i/n" of the piece playing, for the paused status
         self._tts_hint = ""               # the Live captions feedback hint, if shown at Speak
+        self._tts_spans = None            # N10: where each piece of the snapshot is in the box
+        self._tts_snapshot = ""
         self.tts_gen = None               # generation of the narration the UI is showing
         self._narrating_gen = None        # TTS worker only
         self._device_error = None
@@ -307,6 +309,10 @@ class App:
 
         # Editable: the user types or pastes the text to narrate.
         self.tts_text = self._make_text_box(parent)
+        # N10: pieces already played are dimmed, the one playing is highlighted; colour only.
+        self.tts_text.tag_configure("narrated", foreground=DARK["muted"])
+        self.tts_text.tag_configure("speaking", background=DARK["sel"])
+        self.tts_text.tag_raise("sel")
         self.tts_text.bind("<Control-a>", self._select_all)
         self.tts_text.bind("<Control-Return>", self._speak_key)
         self.tts_text.bind("<KeyRelease-Return>", self._speak_key_released)
@@ -629,6 +635,8 @@ class App:
         except ValueError as e:           # Only others / Both without an Others device (spec §5.3)
             self.tts_status_var.set(str(e))
             return
+        self._tts_snapshot, self._tts_spans = text, tts.piece_spans(text)
+        self._clear_marks()
         self.tts_gen = self.narrator.begin()
         self.player.resume()              # a pause left by a stopped narration never carries over
         self.tts_jobs.put(("speak", self.tts_gen, text, self.voice_var.get(),
@@ -677,6 +685,23 @@ class App:
         self.speak_btn.config(text="🔊  Speak")
         self.stop_btn.config(state="disabled")
         self.tts_status_var.set(message)
+        self._clear_marks()               # back to the start (N10)
+
+    def _mark_piece(self, i, n):
+        """Mark pieces 1..i-1 narrated and piece i speaking, while the box matches the snapshot."""
+        self._clear_marks()
+        spans = self._tts_spans
+        if not spans or len(spans) != n or self.tts_text.get("1.0", "end-1c") != self._tts_snapshot:
+            self._tts_spans = None        # edited (or unmatched): stop marking this narration
+            return
+        if i > 1:                         # Tk's "+Nc" counts like Python offsets, emoji too (VERIFIED)
+            self.tts_text.tag_add("narrated", "1.0", f"1.0 + {spans[i - 2][1]}c")
+        start, end = spans[i - 1]
+        self.tts_text.tag_add("speaking", f"1.0 + {start}c", f"1.0 + {end}c")
+
+    def _clear_marks(self):
+        for tag in ("narrated", "speaking"):
+            self.tts_text.tag_remove(tag, "1.0", "end")
 
     def tts_save(self):
         path = self._save_text(self.tts_text)
@@ -848,6 +873,7 @@ class App:
                 continue                  # a narration the user already stopped
             elif kind == "tts_progress":
                 self._tts_progress = f" {payload[1]}/{payload[2]}"
+                self._mark_piece(payload[1], payload[2])
                 if self.tts_paused and self.tts_status_var.get().startswith("Paused"):
                     self.tts_status_var.set(f"Paused{self._tts_progress}.")   # the next piece waits
                     continue

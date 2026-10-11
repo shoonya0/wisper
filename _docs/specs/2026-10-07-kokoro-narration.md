@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | In progress: N0 (spike) and N1 (split window) done 2026-10-07, N2 (narration box), N3 (`tts.py`), N4 (`playback.py`) done 2026-10-09; N5 (narrator + wiring, "Only me") done 2026-10-10 (T-TTS-1…5 passed); N6 ("Only others" / "Both", default Both) done 2026-10-10 (T-MODE-2 passed in Google Meet); N8 (mic pass-through) and N7 (polish) done 2026-10-10 (T-ERR-2 deferred); N9 (pause and resume) 2026-10-11, spec [`2026-10-11-narration-pause.md`](./2026-10-11-narration-pause.md); next: latency |
+| Status | In progress: N0 (spike) and N1 (split window) done 2026-10-07, N2 (narration box), N3 (`tts.py`), N4 (`playback.py`) done 2026-10-09; N5 (narrator + wiring, "Only me") done 2026-10-10 (T-TTS-1…5 passed); N6 ("Only others" / "Both", default Both) done 2026-10-10 (T-MODE-2 passed in Google Meet); N8 (mic pass-through) and N7 (polish) done 2026-10-10 (T-ERR-2 deferred); N9 (pause and resume) 2026-10-11, spec [`2026-10-11-narration-pause.md`](./2026-10-11-narration-pause.md); N10 (mark the narrated text) 2026-10-11, spec [`2026-10-11-narration-highlight.md`](./2026-10-11-narration-highlight.md); next: latency |
 | Date | 2026-10-07 |
 | Owner | shoonya0 |
 | Test plan | [`_docs/test/kokoro-narration.md`](../test/kokoro-narration.md) |
@@ -295,6 +295,7 @@ the UI. Moving Kokoro to the GPU is not a fallback (§5.1).
 | **N7** | **Polish** | `Ctrl+Enter`; status "Speaking 3/12…"; device-unplugged handling (rule 3.3.9); the Live captions feedback note in the UI help. **As built:** `Narrator(on_progress=…)` on the player thread as each piece starts; Ctrl+Enter returns "break" (no newline), does nothing while Speak is disabled, and a held key counts once until it is released; progress only replaces a "Speaking…" status (other messages, e.g. a mic error, stay); the feedback note is a status hint at Speak when Live captions' loopback device is one the narration plays on; rule 3.3.9 was already met in N5 | `test_narrator.py` += progress 1..n before each piece plays, none after stop, optional; `test_playback.py` write error mid-stream already covered in N4 (`fail_on=2`); `test_narration_ui.py` += progress in the status, progress keeps a mic error, Ctrl+Enter bound / toggles / held = once / nothing with Kokoro missing, Speak works on another device after a device error, feedback hint × 5 device and mode cases | T-ERR-2, T-KEY-1 manual |
 | **N8** *(done 2026-10-10, spec [`2026-10-10-mic-passthrough.md`](./2026-10-10-mic-passthrough.md))* | **Mic pass-through** into the cable, so the user can talk *and* narrate in one call | `playback.py` mixer: real mic → cable plus narration (mix and clip) | mixer sum/clip unit tests | the call hears my voice and the narration at the same time (Meet test). Needs its own spec section first (continuous cable stream, mic → cable latency, behavior while Dictation uses the same mic) |
 | **N9** *(2026-10-11, spec [`2026-10-11-narration-pause.md`](./2026-10-11-narration-pause.md))* | **Pause and resume** | `Player.pause/resume` (play waits between blocks, streams open); main button Speak → Pause → Resume; a Stop button | `test_playback.py` += 3, `test_narration_ui.py` += 10 | T-PAUSE-1, T-PAUSE-2 |
+| **N10** *(2026-10-11, spec [`2026-10-11-narration-highlight.md`](./2026-10-11-narration-highlight.md))* | **Mark the narrated text** | `tts.piece_spans`; tags `narrated` / `speaking` set from the progress results; cleared on stop, done, error and when the text is edited | `test_tts_split.py` += 10, `test_narration_ui.py` += 5 | T-MARK-1 |
 
 After N7: update `current-state.md` (what a user can do), `architecture-overview.md`
 (diagram, module table, threads, layer table) and the README feature list.
@@ -310,7 +311,7 @@ After N7: update `current-state.md` (what a user can do), `architecture-overview
 
 ## 10. Future (not in this spec)
 
-- Highlight the sentence being spoken in the box.
+- ~~Highlight the sentence being spoken in the box.~~ Built in N10 ([`2026-10-11-narration-highlight.md`](./2026-10-11-narration-highlight.md)).
 - Export narration to WAV.
 - "Speak selection" (only the selected text).
 - Japanese and Chinese voices (misaki G2P).

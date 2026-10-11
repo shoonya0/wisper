@@ -563,3 +563,85 @@ def test_closing_the_app_while_paused_ends_the_workers(make_window):
     win, _ = speaking_paragraph(make_window)
     win.tts_toggle()
     assert win.tts_paused
+
+
+# ---------------------------------------------------------------- narrated marks (N10)
+
+def marked(win, tag):
+    """The box text under tag (spec 2026-10-11-narration-highlight.md)."""
+    ranges = win.tts_text.tag_ranges(tag)
+    return " ".join(win.tts_text.get(a, b) for a, b in zip(ranges[::2], ranges[1::2], strict=True))
+
+
+def test_pieces_already_played_are_marked_and_the_one_playing_is_highlighted(make_window):
+    win, _ = ready(make_window, piece_s=0.5)
+    win.tts_text.insert("end", PARAGRAPH)
+    win.tts_toggle()
+    pump(win, lambda: win.tts_status_var.get() == "Speaking 1/3…")
+    assert marked(win, "narrated") == "" and marked(win, "speaking") == "First sentence here."
+    pump(win, lambda: win.tts_status_var.get() == "Speaking 2/3…")
+    assert marked(win, "narrated") == "First sentence here."
+    assert marked(win, "speaking") == "Second one follows."
+    pump(win, lambda: win.tts_status_var.get() == "Speaking 3/3…")
+    assert marked(win, "narrated") == "First sentence here. Second one follows."
+    assert marked(win, "speaking") == "And a third."
+    pump(win, lambda: win.tts_status_var.get() == "Narration complete.", timeout=3)
+    assert marked(win, "narrated") == marked(win, "speaking") == "", "done: back to the start"
+    assert win.tts_text.get("1.0", "end-1c") == PARAGRAPH, "marks never change the text"
+
+
+def test_pause_keeps_the_marks_and_stop_goes_back_to_the_start(make_window):
+    win, _ = ready(make_window, piece_s=0.5)
+    win.tts_text.insert("end", PARAGRAPH)
+    win.tts_toggle()
+    pump(win, lambda: win.tts_status_var.get() == "Speaking 2/3…")
+    win.tts_toggle()                                              # pause
+    assert marked(win, "narrated") == "First sentence here."
+    assert marked(win, "speaking") == "Second one follows."
+    win.stop_btn.invoke()
+    assert marked(win, "narrated") == marked(win, "speaking") == ""
+
+
+def test_a_setting_change_clears_the_marks(make_window):
+    win, _ = ready(make_window, piece_s=1.0)
+    win.tts_text.insert("end", PARAGRAPH)
+    win.tts_toggle()
+    pump(win, lambda: marked(win, "speaking") != "")
+    win.speed_var.set("1.5")
+    win.speed_box.event_generate("<<ComboboxSelected>>")
+    assert marked(win, "narrated") == marked(win, "speaking") == ""
+
+
+def test_an_error_clears_the_marks(make_window, monkeypatch):
+    win, engine = ready(make_window, piece_s=0.3)
+    monkeypatch.setattr(app.messagebox, "showerror", lambda title, msg: None)
+    real = engine.synthesize
+
+    def fails_on_the_second(text, voice="af_heart", speed=1.0):
+        if text.startswith("Second"):
+            raise RuntimeError("phonemizer failed")
+        return real(text, voice, speed)
+
+    engine.synthesize = fails_on_the_second
+    win.tts_text.insert("end", PARAGRAPH)
+    win.tts_toggle()
+    pump(win, lambda: marked(win, "speaking") == "First sentence here.")
+    pump(win, lambda: not win.speaking)
+    assert marked(win, "narrated") == marked(win, "speaking") == ""
+
+
+def test_editing_the_text_during_the_narration_removes_the_marks(make_window):
+    win, _ = ready(make_window, piece_s=0.4)
+    win.tts_text.insert("end", PARAGRAPH)
+    win.tts_toggle()
+    pump(win, lambda: marked(win, "speaking") == "First sentence here.")
+    win.tts_text.insert("1.0", "New start. ")                    # the positions no longer match
+    seen = set()
+
+    def watch():
+        seen.add((marked(win, "narrated"), marked(win, "speaking")))
+        return win.tts_status_var.get() == "Narration complete."
+
+    pump(win, watch, timeout=3)
+    assert seen - {("", ""), ("", "First sentence here.")} == set(), f"marked after the edit: {seen}"
+    assert marked(win, "narrated") == marked(win, "speaking") == ""
