@@ -19,7 +19,7 @@ All docs live in `_docs/`. Never create a `docs/` folder.
 ## Commands
 
 - Setup: `app\.venv\Scripts\python.exe -m pip install -r app\requirements-dev.txt`
-- Run: `app\run.bat` (no console), or `cd app` + `.venv\Scripts\python.exe app.py` (tracebacks visible)
+- Run: `cd app` + `.venv\Scripts\pythonw.exe app.py` (no console), or `.venv\Scripts\python.exe app.py` (tracebacks visible)
 - **Fast check, run before saying done: `node tools/verify.mjs`** (ruff check + pyright + pytest, ~6 s)
 - Full check: `node tools/verify.mjs --full` (what CI runs)
 - Single test: `app\.venv\Scripts\python.exe -m pytest app/tests/test_audio_io.py -k overlap`
