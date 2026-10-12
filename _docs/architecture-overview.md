@@ -34,24 +34,26 @@ inlining them.
 | Text to speech | `app/tts.py` | Narration engine (N3): `load()` Kokoro-82M fp32 on the CPU (onnxruntime, 4 threads); `Engine.voices()` / `Engine.synthesize()` → float32 @ 24 kHz; pure `split_sentences()`, `piece_spans()` (N10: where each piece is in the text) and `lang_for_voice()` | The Kokoro ONNX session (not thread safe: TTS worker only) |
 | Narration output | `app/playback.py` | N4: `list_outputs()` (WASAPI, default first), `find_virtual_cable()`, `targets_for(mode, me, others)`, `resample_to()`; `Player` writes the same audio to 1–2 output streams in 50 ms blocks, `stop()` silences them within a block; N9: `pause()` / `resume()` hold `play()` between blocks with the streams open (`stop`, `pause`, `resume` are the only cross-thread calls); `PaStream` is the real PyAudio stream. N8: `list_inputs()` (WASAPI mics, no cables), `is_virtual_cable()`, `PaInput`, `LinearResampler`, `Passthrough` copies the mic into the cable in 10 ms blocks on its own thread (Windows mixes it with the narration) | Open output streams (player thread only); the pass-through's mic and cable streams (`mic-passthrough` thread only) |
 | Narration pipeline | `app/narrator.py` | N5: no Tk or device code; `synth`, `play`, `split` are passed in. `speak(gen, text)` (TTS worker, blocks) synthesizes piece k+1 while a player thread plays piece k, one ahead; `stop()` / `begin()` (any thread) bump a generation id, so a stop before `speak` starts and late synthesis results are dropped; exactly one terminal callback: `on_done(stopped)` or `on_error(msg)`; N7: optional `on_progress(i, n)` as each piece starts playing (the app shows "Speaking i/n…") | Per-narration player thread and stop Event |
+| Terminal | `app/terminal.py` | DeepSeek terminal P1 (spec `2026-10-12-deepseek-terminal`): no Tk. `Terminal` runs a command in a ConPTY pseudo-console (pywinpty), a reader thread feeds a `pyte` screen that keeps scroll-back and answers the program's queries; `write()`, `type_text()` (one line, no Enter), `resize()`, `scroll()`, `close()`; `snapshot()` returns only the rows that changed. Pure `key_bytes()` (Tk key → win32-input-mode keys), `clean()`, `child_env()` | The pseudo-console process and its `terminal-reader` thread; the screen (behind a lock) |
 | Legacy | `app/live_transcriber.py` | Older standalone loopback-only transcriber (large-v3-turbo). Duplicates capture logic. Not imported by `app.py`, `run.bat` or docs | Its own copy of everything |
 | Launcher | `app/run.bat` | Starts `app.py` with the venv's `pythonw.exe` | — |
 | Engine (upstream) | `whisper.cpp/` (gitignored) | ggml-org/whisper.cpp clone at `6e4ab85`, built with `-DGGML_VULKAN=1`. DLLs in `build/bin/Release/`, models in `models/` | Not our code; no `_docs/` there |
 
 ## Layers and allowed imports (target, enforced by import-linter once H9 lands)
 
-| From \ To | app | capture | audio_io | whisper_native | priority | tts | playback | narrator | live_transcriber |
-|---|---|---|---|---|---|---|---|---|---|
-| **app** | — | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
-| **capture** | ❌ | — | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| **audio_io** | ❌ | ❌ | — | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| **whisper_native** | ❌ | ❌ | ❌ | — | ❌ | ❌ | ❌ | ❌ | ❌ |
-| **priority** | ❌ | ❌ | ❌ | ❌ | — | ❌ | ❌ | ❌ | ❌ |
-| **tts** | ❌ | ❌ | ❌ | ❌ | ❌ | — | ❌ | ❌ | ❌ |
-| **playback** | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | — | ❌ | ❌ |
-| **narrator** | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | — | ❌ |
+| From \ To | app | capture | audio_io | whisper_native | priority | tts | playback | narrator | terminal | live_transcriber |
+|---|---|---|---|---|---|---|---|---|---|---|
+| **app** | — | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
+| **capture** | ❌ | — | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **audio_io** | ❌ | ❌ | — | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **whisper_native** | ❌ | ❌ | ❌ | — | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **priority** | ❌ | ❌ | ❌ | ❌ | — | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **tts** | ❌ | ❌ | ❌ | ❌ | ❌ | — | ❌ | ❌ | ❌ | ❌ |
+| **playback** | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | — | ❌ | ❌ | ❌ |
+| **narrator** | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | — | ❌ | ❌ |
+| **terminal** | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | — | ❌ |
 
-`app.py` is the only module that wires things together. The seven lower modules are
+`app.py` is the only module that wires things together. The eight lower modules are
 independent leaves: each depends only on third-party libraries or the stdlib.
 `live_transcriber.py` is legacy; nothing may import it.
 

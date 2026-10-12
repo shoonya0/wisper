@@ -94,8 +94,10 @@ whether Wisper is listening or narrating.
    (font metrics → columns and rows → `setwinsize` and `screen.resize`).
 2. **Keys.** ConPTY turns on **win32-input-mode** (`ESC[?9001h`), so special keys are sent as
    `ESC[vk;sc;uc;down;state;repeat_` pairs (key down, key up), as Windows Terminal does. A
-   plain `ESC[B` was read as Esc and cancelled a dialog (P0). Printable characters, Enter
-   `\r`, Backspace `\x7f` and Ctrl+U are plain bytes. A pure function maps Tk key events to
+   plain `ESC[B` was read as Esc and cancelled a dialog (P0). Printable characters and
+   Ctrl+letters (Ctrl+U) are plain characters. Enter, Backspace, Tab and Esc are also sent as
+   key events (P1, as the P0 live window did), so Shift+Enter and Shift+Tab carry the Shift
+   (a plain `\r` and `\x7f` work too, P0). A pure function maps Tk key events to
    these. Paste is written as one plain line (newlines become spaces), not as a bracketed paste.
    Sequences `pyte` doesn't know (`ESC[?u`, `ESC[<u`, `ESC[>0q`) are removed before feeding it,
    or it prints their last letter. The child gets Wisper's environment without `CLAUDE*`
@@ -308,6 +310,41 @@ Changes for P1/P2:
   Windows Terminal). P1 measures key → Tk-redraw time end to end, and the target is under 50 ms.
 - **Scroll-back**: keep the lines that scroll off the top (`pyte.HistoryScreen`) and scroll
   them with the mouse wheel and Shift+PageUp/PageDown; typing jumps back to the bottom.
+
+### 7.4 P1 measurements (`terminal.py`, 2026-10-12)
+
+The user confirmed that `deepseek` in plain PowerShell doesn't lag. P1 timed the whole path
+with `deepseek` running in `AI-workspace` and an invisible Tk window drawing `snapshot()` on a
+16 ms timer. Keys were written as the view will write them, with no Enter, so no tokens were
+spent. Scripts `p1/lag.py` and `p1/burst.py` are in the session scratchpad.
+
+| Run | Key → drawn in Tk |
+|---|---|
+| A key every 150 ms (31 keys) | median 16.4 ms, p90 18.4 ms; the first key after start ~350 ms (Claude Code still starting after `❯` shows) |
+| A key every 80 ms / 40 ms (46 keys each) | median 16.6 / 16.2 ms, max 32.9 / 31.6 ms; no keys queued up |
+| An 8 ms timer instead of 16 | median 15.8 ms: Tk's `after` can't go below the Windows timer tick |
+
+Draw time per snapshot, including `snapshot()`: median 0.15 ms, max 3 ms. That's because
+`snapshot()` returns only the rows whose text or colours really changed. ConPTY repaints rows
+that didn't change, and the spike redrew every one of them. Typing in P1 is under the 50 ms
+target, and the user checks it by hand in P2.
+
+Found and fixed in P1:
+
+- **ConPTY waits 3 s at start.** It asks for the device attributes (`ESC[c`) and holds the
+  program's output for 3 s until an answer comes (`deepseek`'s `❯` appeared at 3.8 s in P0).
+  pyte now answers the queries (`write_process_input` → the pseudo-console), and `❯` appears
+  at 0.8 s.
+- **The end is seen 5 s late.** pywinpty's reader gets EOF about 5 s after the program ends. A
+  thread waits on the process handle instead, so `on_exit` comes at once. `close()` closes the
+  reader's socket itself, because `PtyProcess.close()` does nothing once `isalive()` has seen
+  the end.
+- **Scroll-back**: a small `pyte.Screen` subclass keeps the lines leaving the top (up to 5000)
+  instead of `HistoryScreen`, whose paging rewrites the screen buffer. `ESC[3J` (`cls`,
+  `/clear`) empties the history. While scrolled back, new output keeps the same lines in view;
+  `write()` goes back to the bottom.
+- An escape sequence split across two reads is held back until the next read, so the
+  `ESC[<u` filter still catches it.
 
 ## 8. Open questions
 
