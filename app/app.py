@@ -71,7 +71,7 @@ DEVICE_ERROR = "Audio device failed"                     # TTS status only, no d
 OUTPUT_MODES = [("me", "Only me"), ("others", "Only others"), ("both", "Both")]   # playback.MODES
 DEFAULT_OUTPUT = "both"                                  # user decision, 2026-10-10
 PASS_ERROR = "Mic to call stopped"                       # TTS status only, no dialog (N8 rule 3.4)
-FEEDBACK_HINT = "Live captions will transcribe it too"    # spec §4 "Feedback risk" (N7)
+STT_PAUSED = "Speech to text paused while narrating."   # D9: listening and narrating take turns
 CABLE_SETUP = (
     "To let a call hear the narration (Only others / Both):\n\n"
     "1. Install VB-Audio Virtual Cable (free, vb-audio.com/Cable): run the setup as "
@@ -97,6 +97,7 @@ NOT_RECOGNIZED = "is not recognized"                     # PowerShell's error fo
 TERMINAL_MS = 16                                         # redraw timer: a key shows within ~16 ms (spec §7.4)
 FILE_WORDS = 100                                         # File mode types this many words, then stops (D8)
 FILE_LIMIT = f"File: typed the first {FILE_WORDS} words."
+FILE_DONE = {"limit": FILE_LIMIT, "stopped": STT_PAUSED, None: "File transcription complete."}
 
 
 
@@ -159,6 +160,7 @@ class App:
         self.transcribing = False        # a live capture session is running
         self.busy = False                # worker mid-inference
         self.last_text = ""               # prompt context for the next chunk (spec §4.3: unchanged)
+        self.file_stop = threading.Event()  # D9: the narration started, the file job ends (§3.2)
         self.terminal = None              # the DeepSeek terminal (terminal.Terminal); None until started
         self._terminal_run = 0            # which start the "terminal_ended" results belong to
 
@@ -179,7 +181,6 @@ class App:
         self.speaking = False             # True from Speak until the narration ends, paused or not
         self.tts_paused = False           # N9: spec 2026-10-11-narration-pause.md
         self._tts_progress = ""           # " i/n" of the piece playing, for the paused status
-        self._tts_hint = ""               # the Live captions feedback hint, if shown at Speak
         self._tts_spans = None            # N10: where each piece of the snapshot is in the box
         self._tts_snapshot = ""
         self.tts_gen = None               # generation of the narration the UI is showing
@@ -597,15 +598,12 @@ class App:
             self.start_file()
             return
         if self.transcribing:
-            self.transcribing = False
-            if self.capture:
-                self.capture.stop()
-                self.capture = None
-            self.start_btn.config(text="▶  Start")
+            self._stop_capture()
         else:
             if not self.devices:
                 messagebox.showerror("No device", "No audio device found for this mode.")
                 return
+            self._pause_narration()
             device = self.devices[self.device_box.current()]
             try:
                 self.capture = capture.Capture(
@@ -617,6 +615,27 @@ class App:
                 return
             self.transcribing = True
             self.start_btn.config(text="⏸  Stop")
+
+    def _stop_capture(self):
+        self.transcribing = False
+        if self.capture:
+            self.capture.stop()
+            self.capture = None
+        self.start_btn.config(text="▶  Start")
+
+    def _stop_listening(self):
+        """D9: the narration is about to start or resume, so speech to text stops (§3.2, §4.6).
+
+        A file job ends at its next step; the words already typed stay."""
+        if self.transcribing:
+            self._stop_capture()
+            self.flash(STT_PAUSED, 5)
+        self.file_stop.set()              # read only by a file job; start_file clears it
+
+    def _pause_narration(self):
+        """D9: listening is about to start, so a playing narration pauses; ▶ Resume continues it."""
+        if self.speaking and not self.tts_paused:
+            self.tts_pause()
 
     def _on_audio_chunk(self, audio):
         # Called from the capture thread; hand off to the worker.
@@ -634,6 +653,8 @@ class App:
         if not getattr(self, "selected_file", None):
             messagebox.showinfo("Choose a file", "Pick an audio file first.")
             return
+        self._pause_narration()
+        self.file_stop.clear()
         self.start_btn.config(state="disabled")
         self.jobs.put(("file", self.selected_file))
 
@@ -739,6 +760,7 @@ class App:
         except ValueError as e:           # Only others / Both without an Others device (spec §5.3)
             self.tts_status_var.set(str(e))
             return
+        self._stop_listening()
         self._tts_snapshot, self._tts_spans = text, tts.piece_spans(text)
         self._clear_marks()
         self.tts_gen = self.narrator.begin()
@@ -747,18 +769,10 @@ class App:
                            float(self.speed_var.get()), devices))
         self.speaking = True
         self.tts_paused = False
-        self._tts_progress = self._tts_hint = ""
+        self._tts_progress = ""
         self.speak_btn.config(text="⏸  Pause")
         self.stop_btn.config(state="normal")
         self.tts_status_var.set("Speaking…")
-        # Loopback hears what plays on its device: if the narration plays there too, Live
-        # captions transcribes it (spec §4 feedback risk).
-        if self.transcribing and SOURCE_KIND.get(self.mode_var.get()) == "loopback":
-            i = self.device_box.current()
-            heard = self.devices[i]["label"] if 0 <= i < len(self.devices) else None
-            if heard in {d["label"] for d in devices if d}:
-                self._tts_hint = f" ({FEEDBACK_HINT})"
-                self.tts_status_var.set(f"Speaking…{self._tts_hint}")
 
     def tts_pause(self):
         """Silence every device within one block; Resume continues from there (N9)."""
@@ -768,10 +782,11 @@ class App:
         self.tts_status_var.set(f"Paused{self._tts_progress}.")
 
     def tts_resume(self):
+        self._stop_listening()
         self.player.resume()
         self.tts_paused = False
         self.speak_btn.config(text="⏸  Pause")
-        self.tts_status_var.set(f"Speaking{self._tts_progress}…{self._tts_hint}")
+        self.tts_status_var.set(f"Speaking{self._tts_progress}…")
 
     def tts_stop(self):
         """Stop the narration, playing or paused (Stop, Clear, a voice/speed/mode/device change).
@@ -906,9 +921,11 @@ class App:
             # no words are cut or repeated at window edges (known issue 1).
             model.transcribe_long(audio, self.language, on_text,
                                   lambda pct: self.results.put(("progress", pct)),
-                                  should_stop=lambda: full)
+                                  should_stop=lambda: full or self.file_stop.is_set())
             if full:
                 self.results.put(("done", "limit"))
+            elif self.file_stop.is_set():
+                self.results.put(("done", "stopped"))
             else:
                 self.results.put(("progress", 100))
                 self.results.put(("done", None))
@@ -997,7 +1014,7 @@ class App:
                     continue
                 if not self.tts_status_var.get().startswith("Speaking"):
                     continue              # keep a message shown meanwhile (a mic error, N8; "Paused", N9)
-                self.tts_status_var.set(f"Speaking{self._tts_progress}…{self._tts_hint}")
+                self.tts_status_var.set(f"Speaking{self._tts_progress}…")
             elif kind == "tts_done":      # a stopped narration was already ended by tts_stop()
                 self._narration_ended("Narration complete.")
             elif kind == "tts_error":
@@ -1022,7 +1039,7 @@ class App:
                 self.flash(f"Transcribing file… {payload}%", 60)
             elif kind == "done":
                 self.start_btn.config(state="normal")
-                self.flash(FILE_LIMIT if payload == "limit" else "File transcription complete.", 4)
+                self.flash(FILE_DONE[payload], 4)
             elif kind == "error":
                 self.status_var.set(payload)
                 messagebox.showerror("Wisper", payload)
@@ -1062,6 +1079,7 @@ class App:
 
 
 def main():
+    priority.kill_children_with_me()     # D10: `deepseek` and all it starts end with Wisper, however it ends
     priority.boost_process()
     root = tk.Tk()
     App(root)

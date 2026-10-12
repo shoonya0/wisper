@@ -10,6 +10,7 @@ File mode types at most 100 words, then stops the file (D8, spec 2026-10-12-deep
 """
 
 import queue
+import threading
 from types import SimpleNamespace
 
 import numpy as np
@@ -52,11 +53,11 @@ class FakeWhisper:
             on_text(text)
 
 
-def transcribe_file(monkeypatch, seconds, model=None):
+def transcribe_file(monkeypatch, seconds, model=None, worker=None):
     audio = (np.arange(int(seconds * SR)) / SR).astype(np.float32)
     monkeypatch.setattr(audio_io, "decode_to_16k_mono", lambda path: audio)
-    worker = SimpleNamespace(results=queue.Queue(), language="en", busy=False)
-    # Only results/language/busy are used, so a stand-in avoids building a Tk window.
+    worker = worker or SimpleNamespace(results=queue.Queue(), language="en", busy=False, file_stop=threading.Event())
+    # Only results/language/busy/file_stop are used, so a stand-in avoids building a Tk window.
     app.App._transcribe_file(worker, model or FakeWhisper(), "talk.wav")  # pyright: ignore[reportArgumentType]
     items = []
     while not worker.results.empty():
@@ -100,6 +101,22 @@ def test_a_chunk_that_crosses_100_words_is_cut(monkeypatch):
     items = transcribe_file(monkeypatch, 60, Chunky())
     assert text_words(items) == [f"w{k}" for k in range(100)]
     assert items[-1] == ("done", "limit")
+
+
+def test_the_narration_starting_stops_the_file_and_keeps_the_typed_words(monkeypatch):   # D9, §3.2
+    class Results(queue.Queue):
+        def put(self, item, block=True, timeout=None):
+            super().put(item, block, timeout)
+            if item == ("text", "w9 "):
+                worker.file_stop.set()     # what _stop_listening() does from the UI thread
+
+    worker = SimpleNamespace(results=Results(), language="en", busy=False, file_stop=threading.Event())
+    model = FakeWhisper()
+    items = transcribe_file(monkeypatch, 60, model, worker)
+    assert text_words(items) == [f"w{k}" for k in range(10)]
+    assert model.said == 10
+    assert items[-1] == ("done", "stopped")
+    assert ("progress", 100) not in items
 
 
 def test_no_header_is_typed(monkeypatch):      # known issue 13: the name goes to the status line
