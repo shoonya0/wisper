@@ -30,7 +30,7 @@ inlining them.
 | Capture | `app/capture.py` | List mic/loopback devices; record; energy-gate segmentation into 16 kHz mono chunks; `DICTATION` / `CAPTIONS` profiles | Per-session capture thread + block queue |
 | File decode | `app/audio_io.py` | Decode WAV/MP3/FLAC/OGG to 16 kHz mono via miniaudio | No |
 | Engine binding | `app/whisper_native.py` | ctypes binding to `whisper.dll`; load the model once (GPU-resident); `transcribe()` | The whisper context (not thread safe) |
-| Platform | `app/priority.py` | Windows-only: raise process/thread/GPU scheduling priority, turn off EcoQoS throttling. Best effort, never raises | No |
+| Platform | `app/priority.py` | Windows-only: raise process/thread/GPU scheduling priority, turn off EcoQoS throttling; P5: `kill_children_with_me()` puts the process in a kill-on-close Job Object (called first in `main()`, never by tests). Best effort, never raises | No |
 | Text to speech | `app/tts.py` | Narration engine (N3): `load()` Kokoro-82M fp32 on the CPU (onnxruntime, 4 threads); `Engine.voices()` / `Engine.synthesize()` → float32 @ 24 kHz; pure `split_sentences()`, `piece_spans()` (N10: where each piece is in the text) and `lang_for_voice()` | The Kokoro ONNX session (not thread safe: TTS worker only) |
 | Narration output | `app/playback.py` | N4: `list_outputs()` (WASAPI, default first), `find_virtual_cable()`, `targets_for(mode, me, others)`, `resample_to()`; `Player` writes the same audio to 1–2 output streams in 50 ms blocks, `stop()` silences them within a block; N9: `pause()` / `resume()` hold `play()` between blocks with the streams open (`stop`, `pause`, `resume` are the only cross-thread calls); `PaStream` is the real PyAudio stream. N8: `list_inputs()` (WASAPI mics, no cables), `is_virtual_cable()`, `PaInput`, `LinearResampler`, `Passthrough` copies the mic into the cable in 10 ms blocks on its own thread (Windows mixes it with the narration) | Open output streams (player thread only); the pass-through's mic and cable streams (`mic-passthrough` thread only) |
 | Narration pipeline | `app/narrator.py` | N5: no Tk or device code; `synth`, `play`, `split` are passed in. `speak(gen, text)` (TTS worker, blocks) synthesizes piece k+1 while a player thread plays piece k, one ahead; `stop()` / `begin()` (any thread) bump a generation id, so a stop before `speak` starts and late synthesis results are dropped; exactly one terminal callback: `on_done(stopped)` or `on_error(msg)`; N7: optional `on_progress(i, n)` as each piece starts playing (the app shows "Speaking i/n…") | Per-narration player thread and stop Event |
@@ -63,23 +63,23 @@ independent leaves: each depends only on third-party libraries or the stdlib.
 
 ## Main flows
 
-1. **Model load**: `App._request_model` (`app/app.py:577`) → `jobs.put(("model", path))`
-   → `_worker_loop` (`app/app.py:834`) closes the old model, creates `Whisper(DLL_DIR, path)`,
+1. **Model load**: `App._request_model` (`app/app.py:578`) → `jobs.put(("model", path))`
+   → `_worker_loop` (`app/app.py:849`) closes the old model, creates `Whisper(DLL_DIR, path)`,
    runs a 1 s silent warm-up, then posts `("ready", None)`.
    English-only models pin the language to `en` and lock the language box.
-2. **Dictation / live captions**: `toggle` (`app/app.py:594`) starts `capture.Capture`
+2. **Dictation / live captions**: `toggle` (`app/app.py:595`) starts `capture.Capture`
    with the mode's `Profile` → `_segment_loop` (`app/capture.py:143`) cuts chunks at
    pauses (RMS < 0.006) → `_on_audio_chunk` queues `("audio", chunk, last 200 chars)`
    (the prompt gives context) → the worker transcribes, drops `is_junk` text, then posts
    `("text", …)`.
-3. **File**: `start_file` → `("file", path)` → `_transcribe_file` (`app/app.py:883`)
+3. **File**: `start_file` → `("file", path)` → `_transcribe_file` (`app/app.py:898`)
    decodes, then `Whisper.transcribe_long` runs one `whisper_full` on the whole file.
    whisper.cpp's segment and progress callbacks run on the worker thread and post
    `("text", …)` and `("progress", %)`; overly dense segments (hallucinations) are dropped.
    At most `FILE_WORDS` (100) words are typed: a word past the limit cuts its chunk and
    `should_stop` makes whisper.cpp's `abort_callback` end the run, then `("done", "limit")`
    shows "File: typed the first 100 words." (D8). The file's name isn't typed.
-4. **UI loop**: `_poll` (`app/app.py:1008`) drains `results` every 100 ms, types each
+4. **UI loop**: `_poll` (`app/app.py:1025`) drains `results` every 100 ms, types each
    `("text", …)` chunk into the DeepSeek terminal (`_type_speech`: one line + a space, never
    Enter), and updates the status line and level meter.
 4a. **DeepSeek terminal (branch `feat/deepseek-terminal`)**: `_start_terminal` starts
@@ -96,9 +96,9 @@ independent leaves: each depends only on third-party libraries or the stdlib.
    empty, else `tts_stop()`, replace the narration box, `tts_toggle()` (Speak) if Kokoro is
    ready. `on_close` closes the Inbox and deletes the settings file.
 5. **Narration (N5; output modes N6)**: at start the TTS worker (`_tts_worker_loop`,
-   `app/app.py:924`) loads Kokoro and warms it up, then posts `("tts_ready", voices)`;
+   `app/app.py:941`) loads Kokoro and warms it up, then posts `("tts_ready", voices)`;
    missing files post the setup message and Speak stays disabled. `tts_toggle`
-   (`app/app.py:724`) snapshots the box, takes `narrator.begin()`'s generation id and
+   (`app/app.py:745`) snapshots the box, takes `narrator.begin()`'s generation id and
    queues `("speak", gen, text, voice, speed, devices)`, where `devices` =
    `playback.targets_for(mode, me, others)` (Only me / Only others / Both, default Both;
    no Others device → the §5.3 message and nothing is queued). The output list is read
@@ -106,6 +106,13 @@ independent leaves: each depends only on third-party libraries or the stdlib.
    `Player`, runs `Narrator.speak` and closes the streams. `_poll_tts` ignores results
    whose generation isn't the one on screen. Stop, Clear and a voice/speed/mode/device change call
    `tts_stop` (narrator and player stop at once; the UI resets without waiting).
+5a. **Taking turns (P5, D9)**: before the narration starts or resumes (Speak, Resume,
+   Ctrl+Enter, an answer), `_stop_listening` (`app/app.py:626`) stops the capture and sets the
+   `file_stop` event, which the file job's `should_stop` reads (it ends with `("done", "stopped")`).
+   Before ▶ Start or Transcribe, `_pause_narration` (`app/app.py:635`) pauses a playing narration.
+   Listening never restarts by itself.
+6. **Lifetime (P5, D10)**: `main()` (`app/app.py:1081`) calls `priority.kill_children_with_me()`
+   before anything starts, so `deepseek` and all it starts die with Wisper however it ends.
 
 ## Threading and state
 

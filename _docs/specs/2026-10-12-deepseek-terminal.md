@@ -244,7 +244,7 @@ jfk.wav ×6): the abort returns at 3.0 s instead of 6.1 s and the next run on th
 
 Done when: tests pass, and manually: a DeepSeek answer is spoken.
 
-**Code done 2026-10-12** (manual check pending). `app/answers.py` (a new leaf): `Inbox`,
+**Done 2026-10-12**: tests pass and the user's manual check passed (answer spoken without marks, a new answer replaces one being spoken, `/clear` narrates nothing). `app/answers.py` (a new leaf): `Inbox`,
 `extract_answer`, `plain_text`, `hook_settings`, and the hook as `main`. The settings file is
 `%TEMP%\wisper-deepseek-hook-<pid>.json`, outside `AI-workspace`, so `deepseek` doesn't see the
 token in its folder; it's deleted on close. The hook runs under `python.exe` (beside `pythonw.exe`
@@ -263,6 +263,14 @@ recorded Markdown answer on stdin, delivers it in 0.19 s.
 
 Done when: tests pass, and manually: closing Wisper by ✕, Ctrl+C and Task Manager leaves no
 `claude.exe`.
+
+**Done 2026-10-12**: tests pass and the user's manual check passed (Start pauses the narration, Resume stops listening, an answer stops listening and is spoken, closing by ✕ / Ctrl+C / Task Manager leaves no `claude.exe`). The File-mode row (a narration stops a running file) wasn't checked by hand: File mode is on hold (user, 2026-10-12); it's covered by tests. The Job Object helper lives in `priority.py`
+(§4.8, user, 2026-10-12): `kill_children_with_me()`, called first in `main()`, never by tests.
+`app.py`: `_stop_listening()` (Speak, Resume, Ctrl+Enter, an answer; only once the narration
+will really start, so "Nothing to narrate." keeps listening) and `_pause_narration()` (▶ Start,
+Transcribe). A file job stops through a `file_stop` event read by its `should_stop`, and ends with
+"Speech to text paused while narrating.". N7's Live captions feedback hint is removed with its
+test (user, 2026-10-12): under D9 the narration never plays while Live captions listens.
 
 ### P6: Docs and the manual test plan
 
