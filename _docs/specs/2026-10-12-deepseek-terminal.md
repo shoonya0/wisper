@@ -346,6 +346,25 @@ Found and fixed in P1:
 - An escape sequence split across two reads is held back until the next read, so the
   `ESC[<u` filter still catches it.
 
+### 7.5 P2 check with `deepseek` (`p2/e2e.py`, 2026-10-12)
+
+`TerminalView` + `Terminal` with real `deepseek` in an invisible window, no Enter: `❯` drawn at
+0.8 s; speech typed as one line ("What is the capital of France?") shows in the input line;
+Backspace through the view's key path removes a character; Ctrl+U clears the line.
+⚠ After the window is made narrower, about half the runs keep Claude Code's previous input box
+above the new one: Claude Code redraws after a resize without clearing what it drew at the old
+width. The user checks it by hand (P0's live window resized cleanly).
+
+**The user's manual check of P2 (2026-10-12), all in the real Wisper window:** start-up ✅,
+typing doesn't lag ✅, speech lands in the input line ✅, scroll-back ✅, copy/paste ✅, resize ✅
+(no leftover input box seen), `/exit` + Enter restart ✅, closing with ✕ leaves no `claude.exe` ✅.
+⚠ **No select-all in the prompt**: Ctrl+A goes to `deepseek` (Claude Code reads it as "start of
+line"), so the text being written in the prompt can't be selected as a whole. To decide: e.g.
+Ctrl+A selects the input line in the view, or Ctrl+Shift+A does.
+
+Left for P3: File mode still sends its `--- name ---` header as text, so it's typed too
+(`test_file_stitching.py` slices it off); P3 replaces it with a status line.
+
 ## 8. Open questions
 
 | # | Question | Answer or proposal |
