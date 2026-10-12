@@ -61,6 +61,8 @@ class Snapshot:
     cursor:   tuple[int, int] | None  # (row, index in the row's text); None when hidden or scrolled away
     scrolled: int                     # lines scrolled back from the bottom (0: following the output)
     history:  int                     # lines kept above the screen
+    caret:    tuple[int, int] | None = None   # where the program's cursor is even when hidden: Claude
+    #                                           Code hides it and draws its own there; None scrolled away
 
 
 def child_env(environ: Mapping[str, str]) -> dict[str, str]:
@@ -186,6 +188,7 @@ class Terminal:
         self._offset = 0
         self._changed = True
         self._cursor_at: tuple[int, int] | None = None
+        self._caret_at: tuple[int, int] | None = None
         self._on_output = on_output
         self._on_exit = on_exit
         self._ended = threading.Event()
@@ -306,7 +309,8 @@ class Terminal:
         with self._lock:
             screen = self._screen
             if not self._changed:
-                return Snapshot(screen.lines, screen.columns, {}, self._cursor_at, self._offset, len(screen.history))
+                return Snapshot(screen.lines, screen.columns, {}, self._cursor_at, self._offset, len(screen.history),
+                                self._caret_at)
             self._changed = False
             history = screen.history
             self._offset = min(self._offset, len(history))
@@ -326,13 +330,15 @@ class Terminal:
                 if self._drawn.get(y) != row:          # ConPTY repaints rows that didn't change
                     changed[y] = row
                     self._drawn[y] = row
-            self._cursor_at = self._cursor(cursor_index)
-            return Snapshot(screen.lines, screen.columns, changed, self._cursor_at, self._offset, len(history))
+            self._caret_at = self._cursor(cursor_index, hidden=True)
+            self._cursor_at = None if screen.cursor.hidden else self._caret_at
+            return Snapshot(screen.lines, screen.columns, changed, self._cursor_at, self._offset, len(history),
+                            self._caret_at)
 
-    def _cursor(self, index: list[int] | None) -> tuple[int, int] | None:
+    def _cursor(self, index: list[int] | None, hidden: bool = False) -> tuple[int, int] | None:
         screen = self._screen
         y = screen.cursor.y + self._offset
-        if screen.cursor.hidden or y >= screen.lines:
+        if (screen.cursor.hidden and not hidden) or y >= screen.lines:
             return None
         if index is None:
             index = render(screen.buffer[screen.cursor.y], screen.columns)[1]

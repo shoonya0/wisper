@@ -161,6 +161,22 @@ def test_a_second_snapshot_without_output_is_empty(child):
     assert child.snapshot().rows == {}
 
 
+def test_a_hidden_cursor_is_still_reported_as_the_caret(tmp_path):     # T-TERM-4: Claude Code hides it
+    script = "import sys, time; sys.stdout.write('abcdef\x1b[?25l\x1b[3D'); sys.stdout.flush(); time.sleep(30)"
+    term = Terminal([sys.executable, "-c", script], str(tmp_path), lines=5, columns=40)
+    try:
+        wait_for(term, screen_has(term, "abcdef"))
+        deadline = time.monotonic() + 5
+        snap = term.snapshot()
+        while snap.caret != (0, 3) and time.monotonic() < deadline:
+            time.sleep(0.05)
+            snap = term.snapshot()
+        assert snap.cursor is None                                     # not drawn: the program hides it
+        assert snap.caret == (0, 3)                                    # but it's there, before "def"
+    finally:
+        term.close()
+
+
 def test_typed_text_reaches_the_program(child):
     wait_for(child, screen_has(child, "ready"))
     child.type_text("hello\nwisper")                                   # one line, no Enter

@@ -4,7 +4,10 @@ Draws a snapshot (rows of styled runs, the cursor) and turns keys, pastes, the m
 its own size into callbacks. It knows nothing about pseudo-consoles: app.py passes the
 snapshots in and the callbacks out. Ctrl+C copies a selection (as Windows Terminal does) and
 is a key for the program when nothing is selected. Ctrl+A selects the text typed in the
-prompt; Ctrl+Shift+A is the program's Ctrl+A (issue #14).
+prompt; Ctrl+Shift+A is the program's Ctrl+A (issue #14). The prompt acts like a text box
+(T-TERM-4): a click in it moves the program's cursor there, and with a selection inside it
+Backspace or Delete deletes the selection, a typed character or a paste replaces it. Claude Code
+takes no mouse events, so these become ← / → and Backspace keys.
 """
 
 import tkinter as tk
@@ -17,6 +20,49 @@ PAD = 6
 WHEEL_LINES = 3
 TK_SHIFT, TK_CONTROL = 0x1, 0x4
 PROMPT = "❯"                                               # Claude Code's input box starts with it
+MODIFIERS = {"Shift_L", "Shift_R", "Control_L", "Control_R", "Alt_L", "Alt_R", "Caps_Lock", "Num_Lock",
+             "Win_L", "Win_R"}                             # pressed on their own, they keep a selection
+ERASE = ("BackSpace", "Delete")
+STALE = (-1, -1)                                           # no snapshot reports it: the next caret always wins
+
+
+Span = tuple[tuple[int, int], tuple[int, int]]
+
+
+def _row_length(lines: list[str], c0: int, r: int, caret: tuple[int, int] | None) -> int:
+    """A prompt row's text length; the program's cursor shows how far trailing spaces go."""
+    length = len(lines[r].rstrip()) - c0
+    if caret is not None and caret[0] == r:
+        length = max(length, caret[1] - c0)
+    return max(0, length)
+
+
+def prompt_index(lines: list[str], span: Span, cell: tuple[int, int],
+                 caret: tuple[int, int] | None = None) -> int | None:
+    """Where `cell` (row, column) is in the prompt's text, counted as ← and → count it; None outside it.
+
+    The rows of the box start at the prompt's column. A wrapped row adds its text and one
+    character (the space at the wrap, or a line break); a cell past a row's text is its end.
+    Trailing spaces don't show, so the row with the program's cursor (`caret`) reaches at least
+    to it (typed speech ends with a space). Checked with real `deepseek` (T-TERM-4).
+    """
+    (r0, c0), (r1, _) = span
+    row, col = cell
+    if not r0 <= row <= r1:
+        return None
+    before = sum(_row_length(lines, c0, r, caret) + 1 for r in range(r0, row))
+    return before + max(0, min(col - c0, _row_length(lines, c0, row, caret)))
+
+
+def cell_at(lines: list[str], span: Span, index: int, caret: tuple[int, int] | None = None) -> tuple[int, int]:
+    """The cell of `index` in the prompt's text: the inverse of `prompt_index`."""
+    (r0, c0), (r1, _) = span
+    for r in range(r0, r1 + 1):
+        length = _row_length(lines, c0, r, caret)
+        if index <= length or r == r1:
+            return r, c0 + min(index, length)
+        index -= length + 1
+    return r1, c0
 
 
 def is_rule(line: str) -> bool:
@@ -25,7 +71,7 @@ def is_rule(line: str) -> bool:
     return len(text) >= 3 and set(text) == {"─"}
 
 
-def input_span(lines: list[str], cursor_row: int | None) -> tuple[tuple[int, int], tuple[int, int]] | None:
+def input_span(lines: list[str], cursor_row: int | None) -> Span | None:
     """Where the text typed in the prompt is: ((row, column), (row, end column)), or None if it's empty.
 
     The input box is the rows between the rules around the cursor; its text starts after `❯ `.
@@ -76,6 +122,8 @@ class TerminalView:
         self._tags: dict[tuple, str] = {}
         self._shape: tuple[int, int] = (0, 0)              # (lines, columns) of the drawn text
         self._cursor_at: tuple[int, int] | None = None
+        self._caret: tuple[int, int] | None = None  # the program's (hidden) cursor, or where it's been moved
+        self._seen_caret: tuple[int, int] | None = None   # the last one a snapshot reported
         self.size: tuple[int, int] = (24, 80)              # (lines, columns) that fit the widget
         w = self.widget
         w.bind("<Key>", self._key)
@@ -84,6 +132,7 @@ class TerminalView:
         w.bind("<Shift-Insert>", self._paste)
         w.bind("<MouseWheel>", self._wheel)
         w.bind("<Button-1>", lambda e: w.focus_set())       # a disabled Text doesn't take focus by itself
+        w.bind("<ButtonRelease-1>", self._click)
         w.bind("<Configure>", self._configure)
 
     # ------------------------------------------------------------------ drawing
@@ -106,6 +155,8 @@ class TerminalView:
     def draw(self, snap) -> None:
         """Draw a `terminal.Snapshot`: its changed rows and the cursor."""
         w = self.widget
+        if snap.caret != self._seen_caret:                # the program moved it (or our moves arrived)
+            self._seen_caret = self._caret = snap.caret
         if not snap.rows and (snap.lines, snap.columns) == self._shape and self._cursor_at == snap.cursor:
             return
         w.configure(state="normal")
@@ -155,19 +206,89 @@ class TerminalView:
         elif state & TK_SHIFT and e.keysym in ("Prior", "Next"):
             page = max(1, self.size[0] - 1)
             self._on_scroll(page if e.keysym == "Prior" else -page)
+        elif e.keysym not in MODIFIERS and (sel := self._prompt_selection()):
+            typed = bool(e.char) and e.char.isprintable() and not state & TK_CONTROL
+            if e.keysym in ERASE or typed:
+                self._delete(*sel)
+            else:
+                self.widget.tag_remove("sel", "1.0", "end")
+            if e.keysym not in ERASE:
+                self._on_key(e.keysym, e.char, state)
         else:
             self._on_key(e.keysym, e.char, state)
         return "break"                                     # the Text never edits itself; Tab doesn't move focus
+
+    def _prompt(self) -> tuple[list[str], Span] | None:
+        """The screen's lines and the span of the text typed in the prompt, or None if it's empty."""
+        lines = self.widget.get("1.0", "end-1c").split("\n")
+        cursor = self._caret or self._cursor_at
+        span = input_span(lines, cursor[0] if cursor else None)
+        return (lines, span) if span else None
 
     def select_input(self) -> None:
         """Select what's typed in the prompt's input box, so Ctrl+C copies it."""
         w = self.widget
         w.tag_remove("sel", "1.0", "end")
-        cursor_row = self._cursor_at[0] if self._cursor_at else None
-        span = input_span(w.get("1.0", "end-1c").split("\n"), cursor_row)
-        if span:
-            (r0, c0), (r1, c1) = span
+        if prompt := self._prompt():
+            (r0, c0), (r1, c1) = prompt[1]
+            if self._caret is not None and self._caret[0] == r1:
+                c1 = max(c1, self._caret[1])                 # a trailing space before the cursor is typed text
             w.tag_add("sel", f"{r0 + 1}.{c0}", f"{r1 + 1}.{c1}")
+
+    def _cell(self, index: str) -> tuple[int, int]:
+        row, col = self.widget.index(index).split(".")
+        return int(row) - 1, int(col)
+
+    def _prompt_selection(self) -> tuple[int, int] | None:
+        """The selection as (start, end) in the prompt's text, if it's inside the prompt and the cursor is known."""
+        w = self.widget
+        if not w.tag_ranges("sel") or self._caret is None or not (prompt := self._prompt()):
+            return None
+        lines, span = prompt
+        last = self._cell("sel.last")
+        if last[1] == 0 and last[0] == span[1][0] + 1:     # a triple-click selects to the next line's start
+            last = (span[1][0], len(lines[span[1][0]]))
+        a = prompt_index(lines, span, self._cell("sel.first"), self._caret)
+        b = prompt_index(lines, span, last, self._caret)
+        if a is None or b is None or prompt_index(lines, span, self._caret, self._caret) is None:
+            return None
+        return a, b
+
+    def _move_to(self, target: int) -> None:
+        """Move the program's cursor to `target` in the prompt's text with ← / →."""
+        prompt = self._prompt()
+        if self._caret is None or prompt is None:
+            return
+        lines, span = prompt
+        here = prompt_index(lines, span, self._caret, self._caret)
+        if here is None:
+            return
+        key = "Right" if target > here else "Left"
+        for _ in range(abs(target - here)):
+            self._on_key(key, "", 0)
+        self._caret = cell_at(lines, span, target, self._caret)   # until the program's own redraw arrives
+
+    def _delete(self, a: int, b: int) -> None:
+        """Delete [a, b) of the prompt's text: the cursor goes to b, then b - a Backspaces."""
+        self.widget.tag_remove("sel", "1.0", "end")
+        self._move_to(b)
+        for _ in range(b - a):
+            self._on_key("BackSpace", "", 0)
+        prompt = self._prompt()
+        if prompt is not None and b > a:
+            self._caret = cell_at(*prompt, a, self._caret)
+        # What's typed or pasted next moves the program's cursor past `a`, perhaps back to where it
+        # was reported: take the next snapshot's caret even if it looks unchanged (review finding 1).
+        self._seen_caret = STALE
+
+    def _click(self, e: tk.Event) -> None:
+        """A click (not a drag) in the prompt moves the program's cursor there."""
+        w = self.widget
+        if w.tag_ranges("sel") or not (prompt := self._prompt()):
+            return
+        target = prompt_index(*prompt, self._cell(f"@{e.x},{e.y}"), self._caret)
+        if target is not None:
+            self._move_to(target)
 
     def copy_selection(self) -> None:
         lines = self.widget.get("sel.first", "sel.last").split("\n")
@@ -180,6 +301,8 @@ class TerminalView:
             text = self.widget.clipboard_get()
         except tk.TclError:                                # empty clipboard, or not text
             return "break"
+        if sel := self._prompt_selection():             # a paste replaces the selected text
+            self._delete(*sel)
         self._on_paste(text)
         return "break"
 
