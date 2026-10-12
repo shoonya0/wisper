@@ -6,13 +6,18 @@ Three modes over one GPU-resident model:
   • File        — transcribe an audio file, text appearing progressively.
 
 The text is typed into the DeepSeek terminal (the `deepseek` CLI in a pseudo-console) in the
-left pane; Wisper never presses Enter (spec 2026-10-12-deepseek-terminal).
+left pane; Wisper never presses Enter (spec 2026-10-12-deepseek-terminal). Each answer
+`deepseek` finishes comes back through a Stop hook (answers.py) and is narrated.
 
 The Whisper model is loaded once and kept in GPU memory by a single worker
 thread (whisper contexts are not thread safe, so only that thread touches it).
 """
 
+import json
+import os
 import queue
+import sys
+import tempfile
 import threading
 import time
 import tkinter as tk
@@ -22,6 +27,7 @@ from tkinter.scrolledtext import ScrolledText
 
 import numpy as np
 
+import answers
 import audio_io
 import capture
 import narrator
@@ -84,13 +90,30 @@ CABLE_SETUP = (
 # DeepSeek terminal (spec 2026-10-12-deepseek-terminal): the user's `deepseek` profile function,
 # run as it is (D3) in a gitignored folder of the project (D4).
 WORKSPACE = Path(__file__).resolve().parent.parent / "AI-workspace"
-DEEPSEEK_ARGV = ["powershell.exe", "-NoLogo", "-Command", "deepseek"]
+HOOK_SCRIPT = Path(__file__).resolve().parent / "answers.py"
 DEEPSEEK_ENDED = "DeepSeek ended. Press Enter to start it again."
 DEEPSEEK_MISSING = "`deepseek` wasn't found: it's a function in your PowerShell profile."
 NOT_RECOGNIZED = "is not recognized"                     # PowerShell's error for an unknown command
 TERMINAL_MS = 16                                         # redraw timer: a key shows within ~16 ms (spec §7.4)
 FILE_WORDS = 100                                         # File mode types this many words, then stops (D8)
 FILE_LIMIT = f"File: typed the first {FILE_WORDS} words."
+
+
+
+def deepseek_argv(settings=None):
+    """PowerShell runs the profile's `deepseek` function; each argument is single-quoted (§4.1)."""
+    command = "deepseek"
+    if settings is not None:
+        command += " '--settings' '" + str(settings).replace("'", "''") + "'"
+    return ["powershell.exe", "-NoLogo", "-Command", command]
+
+
+def hook_python():
+    """python.exe for the hook: under pythonw.exe, the python.exe beside it (it reads stdin)."""
+    exe = Path(sys.executable)
+    console = exe.with_name("python.exe")
+    return console if exe.name.lower() == "pythonw.exe" and console.exists() else exe
+
 
 LANGUAGES = ["auto", "en", "hi", "es", "fr", "de", "ja", "zh", "ru", "pt", "it", "ko", "ar"]
 
@@ -143,7 +166,7 @@ class App:
         #                              | ("file", path) | ("stop",)
         self.jobs = queue.Queue()
         self.results = queue.Queue()     # ("ready"|"text"|"status"|"error"|"progress"|"done"
-        #                                   | "terminal_ended", payload)
+        #                                   | "terminal_ended" | "ai_answer", payload)
         self.loaded_model_path = None
         self.want_model_path = None
 
@@ -177,6 +200,10 @@ class App:
         root.title("Wisper — local speech-to-text (RX 580 · Vulkan)")
         root.geometry("1440x680")
         root.minsize(STT_MIN_W + TTS_MIN_W + SASH_W, 420)
+
+        # P4 (spec §4.4): `deepseek`'s Stop hook sends each final answer here; _poll narrates it.
+        self.inbox = answers.Inbox(lambda text: self.results.put(("ai_answer", text)))
+        self.hook_settings = self._write_hook_settings()
 
         self._apply_theme(root)
         stt_pane, tts_pane = self._build_panes(root)
@@ -620,11 +647,36 @@ class App:
         try:
             WORKSPACE.mkdir(exist_ok=True)
             self.terminal = terminal.Terminal(
-                DEEPSEEK_ARGV, str(WORKSPACE), lines=lines, columns=columns,
+                deepseek_argv(self.hook_settings), str(WORKSPACE), lines=lines, columns=columns,
                 on_exit=lambda: self.results.put(("terminal_ended", run)))
         except Exception as e:            # no powershell.exe, no pseudo-console: say so in its place
             self.terminal = None
             self.term_view.message(f"Couldn't start DeepSeek: {e}")
+
+    def _write_hook_settings(self):
+        """The `--settings` file with the Stop hook (§4.4), outside the workspace `deepseek` sees.
+
+        Returns its path, or None if it can't be written: `deepseek` then runs without narration."""
+        path = Path(tempfile.gettempdir()) / f"wisper-deepseek-hook-{os.getpid()}.json"
+        settings = answers.hook_settings(hook_python(), HOOK_SCRIPT, self.inbox.port, self.inbox.token)
+        try:
+            path.write_text(json.dumps(settings, indent=2), encoding="utf-8")
+        except OSError:
+            return None
+        return path
+
+    def _narrate_answer(self, markdown):
+        """A DeepSeek answer replaces the narration text and is spoken from the start (§4.5)."""
+        text = answers.plain_text(markdown)
+        if not text:
+            return                        # e.g. an answer of only Markdown marks: the box is unchanged
+        self.tts_stop()                   # playing or paused: it ends, the new answer wins
+        self.tts_text.delete("1.0", "end")
+        self.tts_text.insert("1.0", text)
+        if self.speak_btn.instate(["!disabled"]):
+            self.tts_toggle()
+        else:                             # Kokoro missing or still loading: the text waits in the box
+            self.tts_status_var.set("DeepSeek's answer is in the box; narration isn't ready.")
 
     def _terminal_ended(self, run):
         term = self.terminal
@@ -960,6 +1012,8 @@ class App:
                 self._type_speech(payload)
             elif kind == "terminal_ended":
                 self._terminal_ended(payload)
+            elif kind == "ai_answer":
+                self._narrate_answer(payload)
             elif kind == "ready":
                 self.loaded_model_path = self.want_model_path
                 self.start_btn.config(state="normal")
@@ -992,6 +1046,9 @@ class App:
             self.capture.stop()
         if self.terminal is not None:
             self.terminal.close()         # ends `deepseek` and what it started in the pseudo-console
+        self.inbox.close()
+        if self.hook_settings is not None:
+            self.hook_settings.unlink(missing_ok=True)
         self.jobs.put(("stop",))
         self.narrator.stop()
         self.player.stop()

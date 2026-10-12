@@ -1,13 +1,22 @@
-"""The DeepSeek terminal in the window: start-up, speech typed into it, keys, its end and restart.
+"""The DeepSeek terminal in the window: start-up, speech typed into it, keys, its end and restart,
+and its answers narrated.
 
 The real window with a fake terminal (`FakeTerminal` in conftest.py): `deepseek` never runs.
-Spec 2026-10-12-deepseek-terminal §3.1, P2.
+Spec 2026-10-12-deepseek-terminal §3.1, P2 and P4.
 """
 
-from conftest import FakeTerminal, pump
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+from conftest import FakeEngine, FakeTerminal, pump
 from test_window_layout import panes_of
 
+import answers
 import app
+
+FIXTURES = Path(__file__).resolve().parent / "fixtures" / "deepseek-hook"
 
 
 def term(win):
@@ -23,8 +32,30 @@ def descendants(widget):
 def test_deepseek_starts_with_the_window_in_the_workspace(window):
     assert len(FakeTerminal.instances) == 1
     t = term(window)
-    assert t.argv == ["powershell.exe", "-NoLogo", "-Command", "deepseek"]
+    assert t.argv == ["powershell.exe", "-NoLogo", "-Command", f"deepseek '--settings' '{window.hook_settings}'"]
     assert t.cwd == str(app.WORKSPACE) and app.WORKSPACE.name == "AI-workspace"
+
+
+def test_deepseek_gets_the_stop_hook_outside_its_workspace(window):    # §4.4, P4
+    settings = json.loads(window.hook_settings.read_text(encoding="utf-8"))
+    (stop,) = settings["hooks"]["Stop"]
+    (hook,) = stop["hooks"]
+    assert hook["type"] == "command"
+    assert hook["command"].endswith(f'/answers.py" {window.inbox.port} {window.inbox.token}')
+    assert app.WORKSPACE not in window.hook_settings.parents           # `deepseek` can't read the token there
+
+
+def test_deepseek_argv_quotes_for_powershell():
+    assert app.deepseek_argv()[-1] == "deepseek"
+    assert app.deepseek_argv(r"C:\Users\O'Neil\h.json")[-1] == r"deepseek '--settings' 'C:\Users\O''Neil\h.json'"
+
+
+def test_the_hook_runs_under_python_not_pythonw(monkeypatch, tmp_path):
+    (tmp_path / "python.exe").touch()
+    monkeypatch.setattr(app.sys, "executable", str(tmp_path / "pythonw.exe"))
+    assert app.hook_python() == tmp_path / "python.exe"
+    monkeypatch.setattr(app.sys, "executable", str(tmp_path / "python.exe"))
+    assert app.hook_python() == tmp_path / "python.exe"
 
 
 def test_the_transcript_box_and_its_buttons_are_gone(window):
@@ -117,3 +148,76 @@ def test_a_start_failure_shows_in_the_terminal(window, monkeypatch):
     pump(window, lambda: "isn't running" in window.status_var.get())
 
 # Closing the window ends the terminal: checked for every window by make_window's teardown.
+
+
+# ---------------------------------------------------------------- P4: answers → narration
+
+def ready(make_window, **engine_kw):
+    win = make_window(FakeEngine(**engine_kw))
+    pump(win, lambda: win.speak_btn.instate(["!disabled"]))
+    return win
+
+
+def box(win):
+    return win.tts_text.get("1.0", "end-1c")
+
+
+def test_an_answer_replaces_the_narration_text_and_is_spoken(make_window):
+    win = ready(make_window)
+    win.tts_text.insert("1.0", "old notes")
+    win.results.put(("ai_answer", "**Fruits**\n\n- Apple\n- Banana"))
+    pump(win, lambda: win.speaking)
+    assert box(win) == "Fruits\n\nApple.\nBanana."                      # Markdown marks are never read out
+    pump(win, lambda: win.tts_status_var.get() == "Narration complete.")
+
+
+def test_a_new_answer_stops_the_narration_and_starts_from_the_beginning(make_window):
+    win = ready(make_window, piece_s=1.0)
+    win.tts_text.insert("1.0", "One long sentence here. Another one after it. And a third.")
+    win.tts_toggle()
+    pump(win, lambda: "Speaking 1/" in win.tts_status_var.get())
+    first = win.tts_gen
+    win.results.put(("ai_answer", "Teal."))
+    pump(win, lambda: win.tts_gen != first)
+    assert box(win) == "Teal." and win.speaking and not win.tts_paused
+
+
+def test_a_paused_narration_gives_way_to_a_new_answer(make_window):
+    win = ready(make_window, piece_s=1.0)
+    win.tts_text.insert("1.0", "One long sentence here. Another one after it.")
+    win.tts_toggle()
+    win.tts_toggle()                                                   # ⏸ Pause
+    assert win.tts_paused
+    win.results.put(("ai_answer", "OK"))
+    pump(win, lambda: box(win) == "OK")
+    assert win.speaking and not win.tts_paused and win.speak_btn.cget("text") == "⏸  Pause"
+
+
+def test_an_empty_answer_changes_nothing(make_window):
+    win = ready(make_window)
+    win.tts_text.insert("1.0", "keep me")
+    for empty in ("", "   ", "---", "```\n```"):
+        win.results.put(("ai_answer", empty))
+    win.results.put(("text", "marker"))                                 # after the answers in the queue
+    pump(win, lambda: term(win).written == ["marker "])
+    assert box(win) == "keep me" and not win.speaking
+
+
+def test_an_answer_waits_in_the_box_while_narration_is_not_ready(make_window):
+    win = make_window(None)                                            # Kokoro's files are missing
+    pump(win, lambda: win.tts_status_var.get() == app.tts.MISSING_MESSAGE)
+    win.results.put(("ai_answer", "Teal."))
+    pump(win, lambda: box(win) == "Teal.")
+    assert not win.speaking
+    assert win.tts_status_var.get() == "DeepSeek's answer is in the box; narration isn't ready."
+
+
+def test_the_real_hook_script_reaches_the_narration(make_window):
+    win = ready(make_window)
+    hook = json.loads(win.hook_settings.read_text(encoding="utf-8"))["hooks"]["Stop"][0]["hooks"][0]["command"]
+    port, token = hook.split()[-2:]
+    done = subprocess.run([sys.executable, answers.__file__, port, token], timeout=10, capture_output=True,
+                          input=(FIXTURES / "stop-markdown-answer.json").read_bytes())
+    assert done.returncode == 0
+    pump(win, lambda: box(win) == "Fruits\n\nApple.\nBanana.\nCherry.")
+    assert win.speaking
