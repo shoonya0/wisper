@@ -9,7 +9,7 @@ import tkinter as tk
 import pytest
 
 from terminal import Snapshot
-from terminal_view import TerminalView
+from terminal_view import TerminalView, input_span
 
 COLOURS = {"fg": "#d4d4d4", "bg": "#252526", "sel": "#264f78", "border": "#3c3c3c"}
 
@@ -109,6 +109,50 @@ def test_the_size_in_lines_and_columns_follows_the_widget(view):
     view.widget.master.geometry("900x400")
     view.widget.update()
     assert view.size[1] > columns and view.calls["resize"][-1] == view.size
+
+
+# ---- Ctrl+A selects the prompt's text, Ctrl+Shift+A is the program's Ctrl+A (issue #14)
+
+RULE = "─" * 30
+SCREEN = ["● Paris.", "", RULE, "❯ what is the capital", "  of France", RULE, "  ⏵⏵ auto mode on"]
+
+
+def test_input_span_covers_the_typed_text_across_wrapped_rows():
+    assert input_span(SCREEN, cursor_row=4) == ((3, 2), (4, 11))
+    assert input_span(SCREEN, cursor_row=3) == ((3, 2), (4, 11))
+
+
+def test_input_span_without_a_cursor_uses_the_last_prompt_and_skips_the_no_break_space():
+    # Real `deepseek`: the cursor is hidden and the prompt is "❯\xa0" (P2 check, issue #14).
+    screen = ["❯ an earlier question", "● answer", RULE, "❯\xa0What is the capital of France?", RULE, "  ⏵⏵ auto"]
+    assert input_span(screen, cursor_row=None) == ((3, 2), (3, 32))
+
+
+def test_input_span_is_none_for_an_empty_prompt_or_no_prompt():
+    assert input_span(["", RULE, "❯ ", RULE], cursor_row=2) is None
+    assert input_span(["plain output", "more"], cursor_row=1) is None
+    assert input_span(SCREEN, cursor_row=99) is None
+
+
+def test_ctrl_a_selects_the_prompt_text_and_ctrl_c_copies_it(view, monkeypatch):
+    clipboard = []
+    monkeypatch.setattr(view.widget, "clipboard_clear", clipboard.clear)
+    monkeypatch.setattr(view.widget, "clipboard_append", clipboard.append)
+    rows = {y: ((line, None, None, False, False),) for y, line in enumerate(SCREEN)}
+    view.draw(snap(rows, cursor=(4, 10), lines=len(SCREEN), columns=30))
+    view.widget.focus_force()
+    view.widget.event_generate("<Control-a>")
+    assert view.widget.get("sel.first", "sel.last") == "what is the capital\n  of France"
+    assert not view.calls["key"], "Ctrl+A must not reach the program"
+    view.widget.event_generate("<Control-c>")
+    assert clipboard == ["what is the capital\n  of France"]
+
+
+def test_ctrl_shift_a_is_the_programs_ctrl_a(view):
+    view.widget.focus_force()
+    view.widget.event_generate("<Control-Shift-A>")
+    assert view.calls["key"] == [("a", "\x01", 0x4)]
+    assert not view.widget.tag_ranges("sel")
 
 
 def test_a_message_replaces_the_screen(view):

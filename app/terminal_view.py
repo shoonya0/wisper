@@ -3,7 +3,8 @@
 Draws a snapshot (rows of styled runs, the cursor) and turns keys, pastes, the mouse wheel and
 its own size into callbacks. It knows nothing about pseudo-consoles: app.py passes the
 snapshots in and the callbacks out. Ctrl+C copies a selection (as Windows Terminal does) and
-is a key for the program when nothing is selected.
+is a key for the program when nothing is selected. Ctrl+A selects the text typed in the
+prompt; Ctrl+Shift+A is the program's Ctrl+A (issue #14).
 """
 
 import tkinter as tk
@@ -15,6 +16,41 @@ FONT_SIZE = 11
 PAD = 6
 WHEEL_LINES = 3
 TK_SHIFT, TK_CONTROL = 0x1, 0x4
+PROMPT = "❯"                                               # Claude Code's input box starts with it
+
+
+def is_rule(line: str) -> bool:
+    """A line of Claude Code's `─` rules, above and below the input box."""
+    text = line.strip()
+    return len(text) >= 3 and set(text) == {"─"}
+
+
+def input_span(lines: list[str], cursor_row: int | None) -> tuple[tuple[int, int], tuple[int, int]] | None:
+    """Where the text typed in the prompt is: ((row, column), (row, end column)), or None if it's empty.
+
+    The input box is the rows between the rules around the cursor; its text starts after `❯ `.
+    Claude Code hides the terminal's cursor and draws its own, so without one the last `❯` row is used.
+    """
+    if cursor_row is None:
+        cursor_row = next((r for r in range(len(lines) - 1, -1, -1) if PROMPT in lines[r]), -1)
+    if not 0 <= cursor_row < len(lines):
+        return None
+    top = cursor_row
+    while top > 0 and not is_rule(lines[top - 1]):
+        top -= 1
+    bottom = cursor_row
+    while bottom + 1 < len(lines) and not is_rule(lines[bottom + 1]):
+        bottom += 1
+    start = next(((r, lines[r].index(PROMPT) + 1) for r in range(top, bottom + 1) if PROMPT in lines[r]), None)
+    if start is None:
+        return None
+    row, col = start
+    while col < len(lines[row]) and lines[row][col].isspace():   # Claude Code puts a no-break space there
+        col += 1
+    end = next(((r, len(lines[r].rstrip())) for r in range(bottom, row - 1, -1) if lines[r].strip()), None)
+    if end is None or (end[0] == row and end[1] <= col):
+        return None                                        # nothing typed yet
+    return (row, col), end
 
 
 class TerminalView:
@@ -111,12 +147,27 @@ class TerminalView:
         state = e.state if isinstance(e.state, int) else 0  # a str only for events other than keys
         if state & TK_CONTROL and e.keysym.lower() == "c" and self.widget.tag_ranges("sel"):
             self.copy_selection()
+        elif state & TK_CONTROL and e.keysym.lower() == "a":
+            if state & TK_SHIFT:                           # Ctrl+Shift+A: the program's Ctrl+A (start of line)
+                self._on_key("a", "\x01", TK_CONTROL)
+            else:                                          # Ctrl+A: select the text in the prompt (#14)
+                self.select_input()
         elif state & TK_SHIFT and e.keysym in ("Prior", "Next"):
             page = max(1, self.size[0] - 1)
             self._on_scroll(page if e.keysym == "Prior" else -page)
         else:
             self._on_key(e.keysym, e.char, state)
         return "break"                                     # the Text never edits itself; Tab doesn't move focus
+
+    def select_input(self) -> None:
+        """Select what's typed in the prompt's input box, so Ctrl+C copies it."""
+        w = self.widget
+        w.tag_remove("sel", "1.0", "end")
+        cursor_row = self._cursor_at[0] if self._cursor_at else None
+        span = input_span(w.get("1.0", "end-1c").split("\n"), cursor_row)
+        if span:
+            (r0, c0), (r1, c1) = span
+            w.tag_add("sel", f"{r0 + 1}.{c0}", f"{r1 + 1}.{c1}")
 
     def copy_selection(self) -> None:
         lines = self.widget.get("sel.first", "sel.last").split("\n")
