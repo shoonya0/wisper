@@ -61,20 +61,23 @@ independent leaves: each depends only on third-party libraries or the stdlib.
 
 ## Main flows
 
-1. **Model load**: `App._request_model` (`app/app.py:548`) → `jobs.put(("model", path))`
-   → `_worker_loop` (`app/app.py:780`) closes the old model, creates `Whisper(DLL_DIR, path)`,
+1. **Model load**: `App._request_model` (`app/app.py:550`) → `jobs.put(("model", path))`
+   → `_worker_loop` (`app/app.py:782`) closes the old model, creates `Whisper(DLL_DIR, path)`,
    runs a 1 s silent warm-up, then posts `("ready", None)`.
    English-only models pin the language to `en` and lock the language box.
-2. **Dictation / live captions**: `toggle` (`app/app.py:565`) starts `capture.Capture`
+2. **Dictation / live captions**: `toggle` (`app/app.py:567`) starts `capture.Capture`
    with the mode's `Profile` → `_segment_loop` (`app/capture.py:143`) cuts chunks at
    pauses (RMS < 0.006) → `_on_audio_chunk` queues `("audio", chunk, last 200 chars)`
    (the prompt gives context) → the worker transcribes, drops `is_junk` text, then posts
    `("text", …)`.
-3. **File**: `start_file` → `("file", path)` → `_transcribe_file` (`app/app.py:829`)
+3. **File**: `start_file` → `("file", path)` → `_transcribe_file` (`app/app.py:831`)
    decodes, then `Whisper.transcribe_long` runs one `whisper_full` on the whole file.
    whisper.cpp's segment and progress callbacks run on the worker thread and post
    `("text", …)` and `("progress", %)`; overly dense segments (hallucinations) are dropped.
-4. **UI loop**: `_poll` (`app/app.py:940`) drains `results` every 100 ms, types each
+   At most `FILE_WORDS` (100) words are typed: a word past the limit cuts its chunk and
+   `should_stop` makes whisper.cpp's `abort_callback` end the run, then `("done", "limit")`
+   shows "File: typed the first 100 words." (D8). The file's name isn't typed.
+4. **UI loop**: `_poll` (`app/app.py:956`) drains `results` every 100 ms, types each
    `("text", …)` chunk into the DeepSeek terminal (`_type_speech`: one line + a space, never
    Enter), and updates the status line and level meter.
 4a. **DeepSeek terminal (branch `feat/deepseek-terminal`)**: `_start_terminal` starts
@@ -84,9 +87,9 @@ independent leaves: each depends only on third-party libraries or the stdlib.
    (`on_exit`, from a waiting thread) goes through `results` as `("terminal_ended", run)`;
    Enter restarts it; `on_close` closes it.
 5. **Narration (N5; output modes N6)**: at start the TTS worker (`_tts_worker_loop`,
-   `app/app.py:856`) loads Kokoro and warms it up, then posts `("tts_ready", voices)`;
+   `app/app.py:872`) loads Kokoro and warms it up, then posts `("tts_ready", voices)`;
    missing files post the setup message and Speak stays disabled. `tts_toggle`
-   (`app/app.py:670`) snapshots the box, takes `narrator.begin()`'s generation id and
+   (`app/app.py:672`) snapshots the box, takes `narrator.begin()`'s generation id and
    queues `("speak", gen, text, voice, speed, devices)`, where `devices` =
    `playback.targets_for(mode, me, others)` (Only me / Only others / Both, default Both;
    no Others device → the §5.3 message and nothing is queued). The output list is read

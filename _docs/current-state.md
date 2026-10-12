@@ -3,8 +3,8 @@
 Snapshot taken at `46664f5` on `master` (narration N0–N10 merged: PRs #1, #3, #4, #5, #6, #8, #9, #10, #13; File-mode
 fix PR #2; start-up defaults and run docs PR #11). Open issues: #12, #14 (fixed on the branch below).
 Since then, on branch `feat/deepseek-terminal` (2026-10-12): the DeepSeek terminal spec, its P0 spike, P1
-(`app/terminal.py`), P2 (the terminal replaces the transcript box) and the #14 fix (Ctrl+A); pushed,
-no PR yet.
+(`app/terminal.py`), P2 (the terminal replaces the transcript box), the #14 fix (Ctrl+A) and P3 (File mode stops at
+100 words, not pushed yet); no PR yet.
 One page; update it when an increment lands.
 Claims are marked **VERIFIED** (run or read in code) or **ASSUMED**.
 
@@ -16,8 +16,8 @@ Claims are marked **VERIFIED** (run or read in code) or **ASSUMED**.
 | Engine build | ✅ present (VERIFIED) | `whisper.cpp/build/bin/Release/whisper.dll` + `ggml-vulkan.dll`, `GGML_VULKAN=1` in CMakeCache |
 | Models | ✅ present (VERIFIED) | base.en-q5_1, small.en-q5_1, large-v3-turbo-q5_0 in `whisper.cpp/models/` |
 | Narration (TTS) | 🚧 N0–N6 done and merged: Speak/Stop with voice and speed (T-TTS-1…5 passed). N6 (Only me / Only others / Both, default Both, PR #8): Google Meet heard the narration through VB-Cable (T-MODE-2, 2026-10-10). N8 (mic pass-through: the call hears the user's voice and the narration together, PR #9): user checked it in a call and reported it working (2026-10-10). N7 (Ctrl+Enter, "Speaking 3/12…", Live captions feedback hint, PR #10): T-KEY-1 and the progress check passed (user, 2026-10-10); T-ERR-2 deferred. N9 (pause and resume, PR #13): T-PAUSE-1 passed (user, 2026-10-11); **pending: T-PAUSE-2** (in a call). N10 (mark the narrated text, PR #13): T-MARK-1 passed (user, 2026-10-11) | Kokoro-82M fp32 on the CPU: RTF 0.36–0.40 with 4 threads ([performance.md](./performance.md)); model in `models/kokoro/` |
-| Tests | ✅ 271 fast + 2 slow tests on `feat/deepseek-terminal` (220 on `master`; see Test baseline) (characterization, architecture, capture devices, window layout + narration box, file stitching, TTS splitting/spans/voices/engine, playback, narrator, narration UI + output modes + mic pass-through + pause + narrated marks) | baseline below |
-| DeepSeek terminal | 🚧 in progress: spec agreed, **P0, P1 and P2 done** 2026-10-12: the transcript box and Copy all / Clear / Save… are gone; `deepseek` runs in their place (`terminal_view.py`) from start-up, speech is typed into its input line (never Enter), "DeepSeek ended…" / "not found" lines, Enter restarts it. The user's manual check passed (no typing lag, speech, scroll-back, copy/paste, resize, restart, close); select-all in the prompt (issue #14) fixed after it: Ctrl+A selects the prompt's text, Ctrl+Shift+A is `deepseek`'s Ctrl+A. Not yet: answers spoken (P4), File mode's 100-word stop (P3), taking turns and the Job Object (P5). P1 VERIFIED: `deepseek` ready in 0.8 s (was 3.8 s: ConPTY waited for a device-attributes reply), key → drawn median 16 ms / max 33 ms (target 50), scroll-back 5000 lines, exit seen at once. P0: Interactive `deepseek` in a pseudo-console (`pywinpty`) drawn by `pyte` + Tk works, the `Stop` hook returns the final reply (`last_assistant_message`) and the Job Object kills the tree (all VERIFIED in the spike). The user's look at the spike window: typing lagged and there was no scroll-back; P1 addresses both (the user checks typing in P2) | [spec](./specs/2026-10-12-deepseek-terminal.md) §7 (§7.4 P1); workspace `AI-workspace/` (gitignored); hook fixtures in `app/tests/fixtures/deepseek-hook/` |
+| Tests | ✅ 278 fast + 2 slow tests on `feat/deepseek-terminal` (220 on `master`; see Test baseline) (characterization, architecture, capture devices, window layout + narration box, file stitching, TTS splitting/spans/voices/engine, playback, narrator, narration UI + output modes + mic pass-through + pause + narrated marks) | baseline below |
+| DeepSeek terminal | 🚧 in progress: spec agreed, **P0–P3 done** 2026-10-12: the transcript box and Copy all / Clear / Save… are gone; `deepseek` runs in their place (`terminal_view.py`) from start-up, speech is typed into its input line (never Enter), "DeepSeek ended…" / "not found" lines, Enter restarts it. The user's manual check passed (no typing lag, speech, scroll-back, copy/paste, resize, restart, close); select-all in the prompt (issue #14) fixed after it: Ctrl+A selects the prompt's text, Ctrl+Shift+A is `deepseek`'s Ctrl+A. P3: File mode types at most 100 words, then whisper.cpp's abort callback stops the file (GPU check: base.en, 66 s file, the abort returns cleanly at 3.0 s vs 6.1 s for the whole file, and the next run works) and the status says "File: typed the first 100 words."; the `--- name ---` header is no longer typed. Code review: no blocking findings. **Manual check of P3: pending** (a long file types exactly 100 words; a short one is typed whole). Not yet: answers spoken (P4), taking turns and the Job Object (P5). P1 VERIFIED: `deepseek` ready in 0.8 s (was 3.8 s: ConPTY waited for a device-attributes reply), key → drawn median 16 ms / max 33 ms (target 50), scroll-back 5000 lines, exit seen at once. P0: Interactive `deepseek` in a pseudo-console (`pywinpty`) drawn by `pyte` + Tk works, the `Stop` hook returns the final reply (`last_assistant_message`) and the Job Object kills the tree (all VERIFIED in the spike). The user's look at the spike window: typing lagged and there was no scroll-back; P1 addresses both (the user checks typing in P2) | [spec](./specs/2026-10-12-deepseek-terminal.md) §7 (§7.4 P1); workspace `AI-workspace/` (gitignored); hook fixtures in `app/tests/fixtures/deepseek-hook/` |
 | AI harness | ✅ set up; CI runs on GitHub; guard hook verified live | [`ai-harness-setup.md`](./ai-harness-setup.md) |
 
 ## What a user can do today
@@ -26,6 +26,7 @@ Claims are marked **VERIFIED** (run or read in code) or **ASSUMED**.
 - **Live captions** (the start-up mode): transcribe desktop/meeting audio via WASAPI
   loopback (`small.en` default; the Windows default speakers are pre-selected).
 - **File**: transcribe WAV/MP3/FLAC/OGG with progressive text (`large-v3-turbo` default).
+  On `feat/deepseek-terminal` it types at most 100 words into the prompt, then stops (D8).
 - Choose model (fastest ↔ most accurate) and language. On `master` the transcript box has
   Copy all / Save… / Clear; on `feat/deepseek-terminal` it's replaced by the DeepSeek terminal.
 - **DeepSeek terminal** (branch `feat/deepseek-terminal`, P2): the real `deepseek` CLI runs in
@@ -92,11 +93,11 @@ Claims are marked **VERIFIED** (run or read in code) or **ASSUMED**.
 - **Fast check:** `node tools/verify.mjs` (ruff check → pyright → pytest, ~6 s). **Full:** `node tools/verify.mjs --full` (adds the `slow` pytest tests: real Kokoro model, ~4 s).
 - **Tests only:** `app\.venv\Scripts\python.exe -m pytest` (config in root `pyproject.toml`).
 
-## Test baseline (after DeepSeek terminal P2 and issue #14, branch `feat/deepseek-terminal`)
+## Test baseline (after DeepSeek terminal P3, branch `feat/deepseek-terminal`)
 
 | Suite | Result | Known failures (by name) |
 |---|---|---|
-| pytest fast (`-m "not slow"`, 271 tests: architecture, terminal (pseudo-console with a Python child, key map, escape filter, scroll-back), terminal view (incl. Ctrl+A select-all), DeepSeek terminal in the window (fake terminal), audio_io, capture segmenter + devices, file stitching, hallucination filter, window layout + narration box + start-up defaults, TTS split/spans/voices, playback + pause, narrator, narration UI + output modes + mic pass-through, polish, pause, narrated marks) | 271/271 pass (40.6 s) | none |
+| pytest fast (`-m "not slow"`, 278 tests: architecture, terminal (pseudo-console with a Python child, key map, escape filter, scroll-back), terminal view (incl. Ctrl+A select-all), DeepSeek terminal in the window (fake terminal), audio_io, capture segmenter + devices, file stitching + 100-word File limit + abort, hallucination filter, window layout + narration box + start-up defaults, TTS split/spans/voices, playback + pause, narrator, narration UI + output modes + mic pass-through, polish, pause, narrated marks) | 278/278 pass (43.1 s) | none |
 | pytest slow (`-m slow`, 2 tests: Kokoro voices + "Hello world." synthesis; skipped without `models/kokoro/`) | 2/2 pass (3.4 s) | none |
 | ruff check | 0 findings (after `a1dc6b3` sorted imports) | — |
 | pyright (basic) | 0 errors (`live_transcriber.py` excluded, open decision 1) | — |
@@ -155,8 +156,8 @@ Compare new runs against this list **by test name**.
     2026-10-12): Ctrl+A went to `deepseek`. Fixed on `feat/deepseek-terminal` (`a3e4452`):
     Ctrl+A selects the prompt's text, Ctrl+Shift+A is `deepseek`'s Ctrl+A. Typing doesn't
     replace the selection (keys go to `deepseek`). Closes when the branch is merged.
-13. **DeepSeek terminal: File mode types its `--- name ---` header** into the prompt
-    (branch only); P3 replaces it with a status line.
+13. ~~**DeepSeek terminal: File mode types its `--- name ---` header**~~ FIXED in P3
+    (2026-10-12, branch only): the name shows in the status line ("Decoding name…") only.
 
 ## Possible next steps (from the original README)
 
@@ -168,8 +169,10 @@ Compare new runs against this list **by test name**.
 
 ## Next task
 
-- **Next: DeepSeek terminal, P3** (File mode types at most 100 words, then stops). P0–P2 are done
-  (2026-10-12, spec §7; the user checked P2 by hand; issue #14, select-all, fixed).
+- **Next: DeepSeek terminal, P4** (answer → narration: the `Stop` hook sends `deepseek`'s final
+  reply to Wisper, which replaces the narration text and speaks it). P0–P3 are done (2026-10-12,
+  spec §7; the user checked P2 by hand; issue #14, select-all, fixed; P3's manual check: a long
+  file in File mode types 100 words and stops, pending).
   The feature: the transcript box
   becomes the real `deepseek` CLI (pseudo-console drawn in Tk), speech is typed into its input
   line, and each final answer replaces the narration text and is spoken; listening and

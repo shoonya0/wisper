@@ -225,6 +225,11 @@ in its input line.
 
 Done when: tests pass.
 
+**Done 2026-10-12.** A word past the 100th cuts its chunk and `transcribe_long(should_stop=…)`
+sets whisper.cpp's `abort_callback` (already in the mirrored struct: no header change); an abort
+Wisper asked for isn't an error. A file of exactly 100 words is typed whole. GPU check (base.en,
+jfk.wav ×6): the abort returns at 3.0 s instead of 6.1 s and the next run on the same context works.
+
 ### P4: Answer → narration (`answers.py`)
 
 1. The listener (`Inbox`): `127.0.0.1`, random port, per-run token; the answer goes to a queue.
