@@ -244,6 +244,15 @@ jfk.wav ×6): the abort returns at 3.0 s instead of 6.1 s and the next run on th
 
 Done when: tests pass, and manually: a DeepSeek answer is spoken.
 
+**Code done 2026-10-12** (manual check pending). `app/answers.py` (a new leaf): `Inbox`,
+`extract_answer`, `plain_text`, `hook_settings`, and the hook as `main`. The settings file is
+`%TEMP%\wisper-deepseek-hook-<pid>.json`, outside `AI-workspace`, so `deepseek` doesn't see the
+token in its folder; it's deleted on close. The hook runs under `python.exe` (beside `pythonw.exe`
+when Wisper runs without a console). `plain_text` also ends headings and list items with a full
+stop, so Kokoro pauses between them. An answer arriving while Kokoro is missing or loading waits in
+the box. VERIFIED: the hook command from a real settings file, run through Git Bash with the
+recorded Markdown answer on stdin, delivers it in 0.19 s.
+
 ### P5: Taking turns and lifecycle
 
 1. Taking turns (§3.2, §4.6): `_stop_listening()` before every narration start or resume;

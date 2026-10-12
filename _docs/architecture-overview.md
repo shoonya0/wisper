@@ -26,7 +26,7 @@ inlining them.
 
 | Module | Path | Responsibility | Owns state? |
 |---|---|---|---|
-| UI + orchestration | `app/app.py` | 3-mode Tkinter app, model picker, job/result queues, worker loop; the DeepSeek terminal (starts `deepseek`, types speech into it, redraws it every 16 ms, restarts it on Enter); the TTS pane (Speak/Stop, voice, speed, output mode, Me/Others devices, How to set up…, narration box) and the TTS worker loop | Yes: UI state, the DeepSeek terminal, the loaded model (worker thread only), the Kokoro engine (TTS worker only) |
+| UI + orchestration | `app/app.py` | 3-mode Tkinter app, model picker, job/result queues, worker loop; the DeepSeek terminal (starts `deepseek`, types speech into it, redraws it every 16 ms, restarts it on Enter; narrates each answer its Stop hook sends to `answers.Inbox`); the TTS pane (Speak/Stop, voice, speed, output mode, Me/Others devices, How to set up…, narration box) and the TTS worker loop | Yes: UI state, the DeepSeek terminal, the loaded model (worker thread only), the Kokoro engine (TTS worker only) |
 | Capture | `app/capture.py` | List mic/loopback devices; record; energy-gate segmentation into 16 kHz mono chunks; `DICTATION` / `CAPTIONS` profiles | Per-session capture thread + block queue |
 | File decode | `app/audio_io.py` | Decode WAV/MP3/FLAC/OGG to 16 kHz mono via miniaudio | No |
 | Engine binding | `app/whisper_native.py` | ctypes binding to `whisper.dll`; load the model once (GPU-resident); `transcribe()` | The whisper context (not thread safe) |
@@ -36,60 +36,69 @@ inlining them.
 | Narration pipeline | `app/narrator.py` | N5: no Tk or device code; `synth`, `play`, `split` are passed in. `speak(gen, text)` (TTS worker, blocks) synthesizes piece k+1 while a player thread plays piece k, one ahead; `stop()` / `begin()` (any thread) bump a generation id, so a stop before `speak` starts and late synthesis results are dropped; exactly one terminal callback: `on_done(stopped)` or `on_error(msg)`; N7: optional `on_progress(i, n)` as each piece starts playing (the app shows "Speaking i/n…") | Per-narration player thread and stop Event |
 | Terminal | `app/terminal.py` | DeepSeek terminal P1 (spec `2026-10-12-deepseek-terminal`): no Tk. `Terminal` runs a command in a ConPTY pseudo-console (pywinpty), a reader thread feeds a `pyte` screen that keeps scroll-back and answers the program's queries; `write()`, `type_text()` (one line, no Enter), `resize()`, `scroll()`, `close()`; `snapshot()` returns only the rows that changed. Pure `key_bytes()` (Tk key → win32-input-mode keys), `clean()`, `child_env()` | The pseudo-console process and its `terminal-reader` thread; the screen (behind a lock) |
 | Terminal view | `app/terminal_view.py` | DeepSeek terminal P2: the Tk `Text` that draws a `terminal.Snapshot` (colour tags, the cursor), turns keys, Ctrl+V, the wheel, Shift+PageUp/PageDown and its own size (lines × columns) into callbacks; Ctrl+C copies a selection, otherwise it's a key for the program. Imports no project module | The drawn text and style tags (UI thread) |
+| DeepSeek answers | `app/answers.py` | DeepSeek terminal P4: stdlib only. `Inbox` listens on 127.0.0.1 (random port, per-run token) and passes each answer to a callback on its `answers-inbox` thread; run as a script it is `deepseek`'s `Stop` hook (`main`: hook input on stdin → `extract_answer` → `send`, always exit 0, prints nothing). `hook_settings()` builds the `--settings` JSON; pure `plain_text()` turns Markdown into speakable text | The listening socket and its `answers-inbox` thread |
 | Legacy | `app/live_transcriber.py` | Older standalone loopback-only transcriber (large-v3-turbo). Duplicates capture logic. Not imported by `app.py`, `run.bat` or docs | Its own copy of everything |
 | Launcher | `app/run.bat` | Starts `app.py` with the venv's `pythonw.exe` | — |
 | Engine (upstream) | `whisper.cpp/` (gitignored) | ggml-org/whisper.cpp clone at `6e4ab85`, built with `-DGGML_VULKAN=1`. DLLs in `build/bin/Release/`, models in `models/` | Not our code; no `_docs/` there |
 
 ## Layers and allowed imports (target, enforced by import-linter once H9 lands)
 
-| From \ To | app | capture | audio_io | whisper_native | priority | tts | playback | narrator | terminal | terminal_view | live_transcriber |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| **app** | — | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
-| **capture** | ❌ | — | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| **audio_io** | ❌ | ❌ | — | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| **whisper_native** | ❌ | ❌ | ❌ | — | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| **priority** | ❌ | ❌ | ❌ | ❌ | — | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| **tts** | ❌ | ❌ | ❌ | ❌ | ❌ | — | ❌ | ❌ | ❌ | ❌ | ❌ |
-| **playback** | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | — | ❌ | ❌ | ❌ | ❌ |
-| **narrator** | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | — | ❌ | ❌ | ❌ |
-| **terminal** | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | — | ❌ | ❌ |
-| **terminal_view** | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | — | ❌ |
+| From \ To | app | capture | audio_io | whisper_native | priority | tts | playback | narrator | terminal | terminal_view | answers | live_transcriber |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| **app** | — | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
+| **capture** | ❌ | — | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **audio_io** | ❌ | ❌ | — | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **whisper_native** | ❌ | ❌ | ❌ | — | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **priority** | ❌ | ❌ | ❌ | ❌ | — | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **tts** | ❌ | ❌ | ❌ | ❌ | ❌ | — | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **playback** | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | — | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **narrator** | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | — | ❌ | ❌ | ❌ | ❌ |
+| **terminal** | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | — | ❌ | ❌ | ❌ |
+| **terminal_view** | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | — | ❌ | ❌ |
+| **answers** | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | — | ❌ |
 
-`app.py` is the only module that wires things together. The nine lower modules are
+`app.py` is the only module that wires things together. The ten lower modules are
 independent leaves: each depends only on third-party libraries or the stdlib.
 `live_transcriber.py` is legacy; nothing may import it.
 
 ## Main flows
 
-1. **Model load**: `App._request_model` (`app/app.py:550`) → `jobs.put(("model", path))`
-   → `_worker_loop` (`app/app.py:782`) closes the old model, creates `Whisper(DLL_DIR, path)`,
+1. **Model load**: `App._request_model` (`app/app.py:577`) → `jobs.put(("model", path))`
+   → `_worker_loop` (`app/app.py:834`) closes the old model, creates `Whisper(DLL_DIR, path)`,
    runs a 1 s silent warm-up, then posts `("ready", None)`.
    English-only models pin the language to `en` and lock the language box.
-2. **Dictation / live captions**: `toggle` (`app/app.py:567`) starts `capture.Capture`
+2. **Dictation / live captions**: `toggle` (`app/app.py:594`) starts `capture.Capture`
    with the mode's `Profile` → `_segment_loop` (`app/capture.py:143`) cuts chunks at
    pauses (RMS < 0.006) → `_on_audio_chunk` queues `("audio", chunk, last 200 chars)`
    (the prompt gives context) → the worker transcribes, drops `is_junk` text, then posts
    `("text", …)`.
-3. **File**: `start_file` → `("file", path)` → `_transcribe_file` (`app/app.py:831`)
+3. **File**: `start_file` → `("file", path)` → `_transcribe_file` (`app/app.py:883`)
    decodes, then `Whisper.transcribe_long` runs one `whisper_full` on the whole file.
    whisper.cpp's segment and progress callbacks run on the worker thread and post
    `("text", …)` and `("progress", %)`; overly dense segments (hallucinations) are dropped.
    At most `FILE_WORDS` (100) words are typed: a word past the limit cuts its chunk and
    `should_stop` makes whisper.cpp's `abort_callback` end the run, then `("done", "limit")`
    shows "File: typed the first 100 words." (D8). The file's name isn't typed.
-4. **UI loop**: `_poll` (`app/app.py:956`) drains `results` every 100 ms, types each
+4. **UI loop**: `_poll` (`app/app.py:1008`) drains `results` every 100 ms, types each
    `("text", …)` chunk into the DeepSeek terminal (`_type_speech`: one line + a space, never
    Enter), and updates the status line and level meter.
 4a. **DeepSeek terminal (branch `feat/deepseek-terminal`)**: `_start_terminal` starts
-   `powershell -Command deepseek` in `AI-workspace` at start-up; `terminal.Terminal`'s reader
+   `powershell -Command "deepseek '--settings' '<hook file>'"` in `AI-workspace` at start-up; `terminal.Terminal`'s reader
    thread feeds the screen; `_draw_terminal` (every 16 ms) draws `snapshot()` in
    `TerminalView`; keys from the view go through `terminal.key_bytes`. The end
    (`on_exit`, from a waiting thread) goes through `results` as `("terminal_ended", run)`;
    Enter restarts it; `on_close` closes it.
+4b. **DeepSeek answer → narration (P4)**: `App.__init__` starts `answers.Inbox` and writes the
+   hook settings to `%TEMP%\wisper-deepseek-hook-<pid>.json` (outside the workspace). At the end of
+   each answered turn Claude Code runs `python answers.py <port> <token>` through Git Bash in the
+   pseudo-console; it sends `last_assistant_message` to the Inbox, whose thread posts
+   `("ai_answer", text)` to `results`. `_poll` → `_narrate_answer`: `plain_text()`, nothing if
+   empty, else `tts_stop()`, replace the narration box, `tts_toggle()` (Speak) if Kokoro is
+   ready. `on_close` closes the Inbox and deletes the settings file.
 5. **Narration (N5; output modes N6)**: at start the TTS worker (`_tts_worker_loop`,
-   `app/app.py:872`) loads Kokoro and warms it up, then posts `("tts_ready", voices)`;
+   `app/app.py:924`) loads Kokoro and warms it up, then posts `("tts_ready", voices)`;
    missing files post the setup message and Speak stays disabled. `tts_toggle`
-   (`app/app.py:672`) snapshots the box, takes `narrator.begin()`'s generation id and
+   (`app/app.py:724`) snapshots the box, takes `narrator.begin()`'s generation id and
    queues `("speak", gen, text, voice, speed, devices)`, where `devices` =
    `playback.targets_for(mode, me, others)` (Only me / Only others / Both, default Both;
    no Others device → the §5.3 message and nothing is queued). The output list is read
@@ -115,6 +124,8 @@ independent leaves: each depends only on third-party libraries or the stdlib.
   can open streams at the same instant; the window for that is tiny (Start pressed as a
   narration opens its stream) and is accepted for now.
 - The capture thread only produces chunks. The UI thread only reads `results`.
+- The **`answers-inbox`** thread (P4) only accepts hook connections and puts
+  `("ai_answer", text)` on `results`; it touches no Tk or audio object.
 - Shared attributes read across threads without locks: `busy`, `language`,
   `loaded_model_path`, `last_text`. This is acceptable under the GIL but fragile; see
   current-state known issues.
