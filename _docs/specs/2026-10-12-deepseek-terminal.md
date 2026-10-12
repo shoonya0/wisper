@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Agreed (2026-10-12): **P0–P5 done, P6 written** (the user runs the remaining manual rows); File mode on hold (user, 2026-10-12), so T-FILE-1/2 and T-TURN-4 wait |
+| Status | Agreed (2026-10-12): **P0–P6 done**: every manual row passed (user, 2026-10-12) except the File rows; File mode on hold (user, 2026-10-12), so T-FILE-1/2 and T-TURN-4 wait |
 | Date | 2026-10-12 |
 | Owner | shoonya0 |
 | Test plan | [`_docs/test/deepseek-terminal.md`](../test/deepseek-terminal.md) |
@@ -56,6 +56,7 @@ never run at the same time.
 | File mode | Types the file's words until 100 are typed, then the transcription stops; the status says "File: typed the first 100 words." A shorter file is typed whole |
 | Click in the terminal, type | Keys go to `deepseek` (letters, Enter, Backspace, arrows, Tab, Esc, Ctrl+C); Ctrl+Shift+A is `deepseek`'s Ctrl+A |
 | Ctrl+A | Selects the text typed in the prompt (issue #14) |
+| Click in the prompt; select part of it with the mouse | The prompt acts like a text box (T-TERM-4): a click moves `deepseek`'s cursor there; with a selection inside the prompt (mouse or Ctrl+A), Backspace or Delete deletes it and a typed character or a paste replaces it. A selection outside the prompt is only for copying |
 | Select with the mouse, Ctrl+C | Copies the selection (as Windows Terminal does); Ctrl+C without a selection goes to `deepseek` (interrupt) |
 | Ctrl+V | Pastes the clipboard into the input line |
 | DeepSeek finishes an answer | Narration stops if it was playing or paused, the narration box gets the answer, Speak starts from the beginning (and §3.2 pauses speech to text) |
@@ -281,8 +282,8 @@ test (user, 2026-10-12): under D9 the narration never plays while Live captions 
 
 Done when: the user runs the manual plan.
 
-**Written 2026-10-12**: the plan and docs are done; the rows the user already checked in P2, P4 and P5 are
-marked passed. Left: T-TERM-4 (#14), T-TERM-6 (special keys), T-TURN-5, and the File rows (on hold).
+**Done 2026-10-12**: the user ran the manual plan; every row passed except the File rows (on hold).
+T-TERM-4 failed first and led to issues #15 and #16 (the prompt edits like a text box), fixed and passed.
 
 ## 7. Spike findings (P0, 2026-10-12)
 
@@ -388,8 +389,18 @@ typing doesn't lag ✅, speech lands in the input line ✅, scroll-back ✅, cop
 as "start of line"). **Fixed** as the user decided (2026-10-12): **Ctrl+A** selects the text in
 the prompt's input box (between the `─` rules, after `❯`), so Ctrl+C copies it; **Ctrl+Shift+A**
 sends Ctrl+A to `deepseek`. Claude Code hides the terminal's cursor and writes `❯` + a no-break
-space, so the last `❯` row is used. Typing doesn't replace the selection: keys still go to
-`deepseek`. Checked with real `deepseek`: the selection is exactly the typed question.
+space, so the last `❯` row is used. Checked with real `deepseek`: the selection is exactly the typed question.
+**T-TERM-4 (user, 2026-10-12; issues #15, #16):** Backspace after Ctrl+A removed only the last letter, a part
+selected with the mouse couldn't be deleted, and a click didn't move the cursor. Claude Code takes
+no mouse events (it turns on no mouse mode: only `?1004`, `?2004`, `?2026`, `?2031`, `?25`, `?9001`),
+but it parks the hidden terminal cursor on the cursor it draws, so `Snapshot.caret` reports it.
+`terminal_view.prompt_index` maps a cell to its place in the prompt's text as ← / → count it (a
+wrapped row adds one character; trailing spaces reach the cursor). A click sends ← / → to that
+place; a selection inside the prompt is deleted by moving to its end and sending one Backspace per
+character; typing or pasting replaces it. VERIFIED with real `deepseek` and the real view
+(scratchpad `edit_e2e.py`, no Enter): delete a word, replace a word, click then type, two quick
+clicks, Ctrl+A + Delete; all right on a wrapped prompt ending in a typed space. A URL cut mid-word at
+a wrap counts the same (`wrap_e2e.py`). **Passed (user, 2026-10-12):** T-TERM-4, T-TERM-7, T-TERM-8.
 
 Left for P3: File mode still sends its `--- name ---` header as text, so it's typed too
 (`test_file_stitching.py` slices it off); P3 replaces it with a status line.
