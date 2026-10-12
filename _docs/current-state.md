@@ -1,7 +1,8 @@
-# Wisper: current state (snapshot 2026-10-11)
+# Wisper: current state (snapshot 2026-10-12)
 
 Snapshot taken at `46664f5` on `master` (narration N0–N10 merged: PRs #1, #3, #4, #5, #6, #8, #9, #10, #13; File-mode
 fix PR #2; start-up defaults and run docs PR #11). Open issue: #12.
+Since then, on branch `feat/deepseek-terminal` (2026-10-12): the DeepSeek terminal spec and its P0 spike (no app code).
 One page; update it when an increment lands.
 Claims are marked **VERIFIED** (run or read in code) or **ASSUMED**.
 
@@ -14,6 +15,7 @@ Claims are marked **VERIFIED** (run or read in code) or **ASSUMED**.
 | Models | ✅ present (VERIFIED) | base.en-q5_1, small.en-q5_1, large-v3-turbo-q5_0 in `whisper.cpp/models/` |
 | Narration (TTS) | 🚧 N0–N6 done and merged: Speak/Stop with voice and speed (T-TTS-1…5 passed). N6 (Only me / Only others / Both, default Both, PR #8): Google Meet heard the narration through VB-Cable (T-MODE-2, 2026-10-10). N8 (mic pass-through: the call hears the user's voice and the narration together, PR #9): user checked it in a call and reported it working (2026-10-10). N7 (Ctrl+Enter, "Speaking 3/12…", Live captions feedback hint, PR #10): T-KEY-1 and the progress check passed (user, 2026-10-10); T-ERR-2 deferred. N9 (pause and resume, PR #13): T-PAUSE-1 passed (user, 2026-10-11); **pending: T-PAUSE-2** (in a call). N10 (mark the narrated text, PR #13): T-MARK-1 passed (user, 2026-10-11) | Kokoro-82M fp32 on the CPU: RTF 0.36–0.40 with 4 threads ([performance.md](./performance.md)); model in `models/kokoro/` |
 | Tests | ✅ 220 fast + 2 slow tests (characterization, architecture, capture devices, window layout + narration box, file stitching, TTS splitting/spans/voices/engine, playback, narrator, narration UI + output modes + mic pass-through + pause + narrated marks) | baseline below |
+| DeepSeek terminal | 🚧 planned: spec agreed, **P0 (spike) done** 2026-10-12, no app code yet. Interactive `deepseek` in a pseudo-console (`pywinpty`) drawn by `pyte` + Tk works, the `Stop` hook returns the final reply (`last_assistant_message`) and the Job Object kills the tree (all VERIFIED in the spike). The user's look at the live window: works, but **typing lags** and there's **no scroll-back** (both fixed in P1) | [spec](./specs/2026-10-12-deepseek-terminal.md) §7; workspace `AI-workspace/` (gitignored); hook fixtures in `app/tests/fixtures/deepseek-hook/` |
 | AI harness | ✅ set up; CI runs on GitHub; guard hook verified live | [`ai-harness-setup.md`](./ai-harness-setup.md) |
 
 ## What a user can do today
@@ -101,6 +103,7 @@ Compare new runs against this list **by test name**.
 | 1 | `app/live_transcriber.py` (legacy, unused) | delete · keep as reference · fold its differences into `app.py` | user | no |
 | 2 | How to pin whisper.cpp | gitignored + documented commit (current) · git submodule | user | no |
 | 3 | large-v3-turbo speed: README says ~6.3× RT, an earlier note says ~4.6× | re-measure with `whisper-bench` | user | no |
+| 4 | DeepSeek terminal typing lag: the spike's Tk loop or Claude Code in any ConPTY? | ask the user whether `deepseek` lags in Windows Terminal too; P1 measures key → redraw | agent + user | P2 |
 
 ## Known issues and risks
 
@@ -153,6 +156,13 @@ Compare new runs against this list **by test name**.
 
 ## Next task
 
+- **Next: DeepSeek terminal, P1.** P0 (spike) is done (2026-10-12, findings in spec §7);
+  the user still has to look at the live spike window (§7.3). The feature: the transcript box
+  becomes the real `deepseek` CLI (pseudo-console drawn in Tk), speech is typed into its input
+  line, and each final answer replaces the narration text and is spoken; listening and
+  narrating take turns. Hook fixtures in `app/tests/fixtures/deepseek-hook/`. Spec,
+  decisions D1–D11 and phases P0–P6:
+  [`specs/2026-10-12-deepseek-terminal.md`](./specs/2026-10-12-deepseek-terminal.md).
 - **Planned feature: Narration (text to speech with Kokoro-82M).** The window splits
   into STT (left) and TTS (right), with output modes Only me / Only others / Both.
   Spec: [`specs/2026-10-07-kokoro-narration.md`](./specs/2026-10-07-kokoro-narration.md).
