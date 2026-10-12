@@ -54,7 +54,8 @@ never run at the same time.
 | App starts | The terminal shows `deepseek` starting, in `AI-workspace`. The STT controls work as before |
 | Speech (Dictation, Live captions) | Each transcribed chunk is typed at the end of the input line, with a space between chunks. Nothing is sent |
 | File mode | Types the file's words until 100 are typed, then the transcription stops; the status says "File: typed the first 100 words." A shorter file is typed whole |
-| Click in the terminal, type | Keys go to `deepseek` (letters, Enter, Backspace, arrows, Tab, Esc, Ctrl+C) |
+| Click in the terminal, type | Keys go to `deepseek` (letters, Enter, Backspace, arrows, Tab, Esc, Ctrl+C); Ctrl+Shift+A is `deepseek`'s Ctrl+A |
+| Ctrl+A | Selects the text typed in the prompt (issue #14) |
 | Select with the mouse, Ctrl+C | Copies the selection (as Windows Terminal does); Ctrl+C without a selection goes to `deepseek` (interrupt) |
 | Ctrl+V | Pastes the clipboard into the input line |
 | DeepSeek finishes an answer | Narration stops if it was playing or paused, the narration box gets the answer, Speak starts from the beginning (and §3.2 pauses speech to text) |
@@ -358,9 +359,12 @@ width. The user checks it by hand (P0's live window resized cleanly).
 **The user's manual check of P2 (2026-10-12), all in the real Wisper window:** start-up ✅,
 typing doesn't lag ✅, speech lands in the input line ✅, scroll-back ✅, copy/paste ✅, resize ✅
 (no leftover input box seen), `/exit` + Enter restart ✅, closing with ✕ leaves no `claude.exe` ✅.
-⚠ **No select-all in the prompt**: Ctrl+A goes to `deepseek` (Claude Code reads it as "start of
-line"), so the text being written in the prompt can't be selected as a whole. To decide: e.g.
-Ctrl+A selects the input line in the view, or Ctrl+Shift+A does.
+⚠ **No select-all in the prompt** (issue #14): Ctrl+A went to `deepseek` (Claude Code reads it
+as "start of line"). **Fixed** as the user decided (2026-10-12): **Ctrl+A** selects the text in
+the prompt's input box (between the `─` rules, after `❯`), so Ctrl+C copies it; **Ctrl+Shift+A**
+sends Ctrl+A to `deepseek`. Claude Code hides the terminal's cursor and writes `❯` + a no-break
+space, so the last `❯` row is used. Typing doesn't replace the selection: keys still go to
+`deepseek`. Checked with real `deepseek`: the selection is exactly the typed question.
 
 Left for P3: File mode still sends its `--- name ---` header as text, so it's typed too
 (`test_file_stitching.py` slices it off); P3 replaces it with a status line.
