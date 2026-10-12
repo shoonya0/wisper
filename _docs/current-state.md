@@ -1,7 +1,7 @@
 # Wisper: current state (snapshot 2026-10-12)
 
 Snapshot taken at `46664f5` on `master` (narration N0–N10 merged: PRs #1, #3, #4, #5, #6, #8, #9, #10, #13; File-mode
-fix PR #2; start-up defaults and run docs PR #11). Open issues: #12; #14, #15, #16 (fixed on the branch below).
+fix PR #2; start-up defaults and run docs PR #11). Open issues: #12. Closed by hand (user, 2026-10-12): #14, #15, #16, fixed on the branch below and verified.
 Since then, on branch `feat/deepseek-terminal` (2026-10-12): the DeepSeek terminal spec, its P0 spike, P1
 (`app/terminal.py`), P2 (the terminal replaces the transcript box), the #14 fix (Ctrl+A), P3 (File mode stops at
 100 words), P4 (answers narrated), P5 (taking turns, Job Object), P6 (manual test plan) and the prompt editing like a
@@ -172,7 +172,7 @@ Compare new runs against this list **by test name**.
 
 ## Next task
 
-- **Next: open the DeepSeek terminal PR** (`feat/deepseek-terminal` → `master`; it fixes #14, #15, #16).
+- **Next: open the DeepSeek terminal PR** (`feat/deepseek-terminal` → `master`; it contains the fixes for #14, #15, #16, already closed).
   P0–P6 are done (2026-10-12): the user ran the manual plan
   ([`test/deepseek-terminal.md`](./test/deepseek-terminal.md)) and every row passed except the File rows.
   **File mode is on hold** (user, 2026-10-12): T-FILE-1/2 (P3) and T-TURN-4 (P5's File row) wait for it.
