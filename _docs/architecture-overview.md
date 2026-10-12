@@ -74,8 +74,15 @@ independent leaves: each depends only on third-party libraries or the stdlib.
    decodes, then `Whisper.transcribe_long` runs one `whisper_full` on the whole file.
    whisper.cpp's segment and progress callbacks run on the worker thread and post
    `("text", …)` and `("progress", %)`; overly dense segments (hallucinations) are dropped.
-4. **UI loop**: `_poll` (`app/app.py:762`) drains `results` every 100 ms, appends text,
-   and updates the status line and level meter.
+4. **UI loop**: `_poll` (`app/app.py:940`) drains `results` every 100 ms, types each
+   `("text", …)` chunk into the DeepSeek terminal (`_type_speech`: one line + a space, never
+   Enter), and updates the status line and level meter.
+4a. **DeepSeek terminal (branch `feat/deepseek-terminal`)**: `_start_terminal` starts
+   `powershell -Command deepseek` in `AI-workspace` at start-up; `terminal.Terminal`'s reader
+   thread feeds the screen; `_draw_terminal` (every 16 ms) draws `snapshot()` in
+   `TerminalView`; keys from the view go through `terminal.key_bytes`. The end
+   (`on_exit`, from a waiting thread) goes through `results` as `("terminal_ended", run)`;
+   Enter restarts it; `on_close` closes it.
 5. **Narration (N5; output modes N6)**: at start the TTS worker (`_tts_worker_loop`,
    `app/app.py:678`) loads Kokoro and warms it up, then posts `("tts_ready", voices)`;
    missing files post the setup message and Speak stays disabled. `tts_toggle`
