@@ -4,6 +4,7 @@ No GPU, model file or audio device is touched. Used by test_window_layout.py and
 test_narration_ui.py.
 """
 
+import gc
 import time
 import tkinter as tk
 
@@ -208,6 +209,13 @@ def make_window(monkeypatch):
             assert not worker.is_alive(), f"{worker.name} didn't stop after on_close()"
         assert not win.passthrough.running, "the mic pass-through didn't stop after on_close()"
         assert win.terminal is None or win.terminal.closed, "the DeepSeek terminal didn't end with the window"
+    # An App lives in reference cycles (lambdas holding self), so only the cyclic GC frees its Tk
+    # interpreter, on whichever thread triggers it. Freed from a worker thread of the next test's
+    # window, Tcl aborts the run ("Tcl_AsyncDelete: async handler deleted by the wrong thread").
+    # Collect here, on the main thread that created it.
+    windows.clear()
+    win = root = None
+    gc.collect()
 
 
 @pytest.fixture
