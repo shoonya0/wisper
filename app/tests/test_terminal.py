@@ -11,7 +11,7 @@ import time
 import pyte
 import pytest
 
-from terminal import Terminal, _Screen, child_env, clean, key_bytes, one_line, render, win32_key
+from terminal import Terminal, _Screen, child_env, clean, key_bytes, one_line, pasted, render, typed, win32_key
 
 # Prints 40 numbered lines and a red word, then answers every input line with its size.
 CHILD = """import os, sys
@@ -74,6 +74,16 @@ def test_child_env_drops_the_claude_session_variables():
 def test_one_line_joins_lines_with_spaces():
     assert one_line("open the\nfile  please\r\n") == "open the file please"
     assert one_line(" \n ") == ""
+
+
+def test_typed_speech_ends_with_one_space_and_nothing_is_typed_for_blank():
+    assert typed(" open the\nfile ") == "open the file "
+    assert typed(" \n") == ""
+    assert "\r" not in typed("a\r\nb")                                # never Enter
+
+
+def test_a_paste_keeps_its_spacing_on_one_line():
+    assert pasted("a  b\r\nc\nd") == "a  b c d"
 
 
 def test_render_skips_the_second_column_of_a_wide_character():
@@ -157,7 +167,7 @@ def test_typed_text_reaches_the_program(child):
     wait_for(child, screen_has(child, "> hello wisper"))
     assert not any("got" in line for line in child.text())
     child.write("\r")
-    wait_for(child, screen_has(child, "got hello wisper size 60 10"))
+    wait_for(child, screen_has(child, "got hello wisper  size 60 10"))  # typed text ends with a space
 
 
 def test_resize_reaches_the_program(child):
@@ -219,6 +229,14 @@ def test_exit_is_reported(child):
     started = time.monotonic()
     child.close()                                                      # the reader's EOF comes ~5 s late
     assert time.monotonic() - started < 1
+
+
+def test_a_notice_shows_on_screen_and_is_not_sent(child):
+    wait_for(child, screen_has(child, "ready"))
+    child.notice("DeepSeek ended.")
+    wait_for(child, screen_has(child, "DeepSeek ended."))
+    child.write("\r")
+    wait_for(child, screen_has(child, "got  size"))                     # the program got an empty line
 
 
 def test_close_ends_the_program(child):

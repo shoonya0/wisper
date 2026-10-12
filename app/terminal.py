@@ -87,6 +87,17 @@ def one_line(text: str) -> str:
     return " ".join(text.split())
 
 
+def typed(text: str) -> str:
+    """What speech types: one line and a space, so the next chunk doesn't run into it; "" for nothing."""
+    line = one_line(text)
+    return line + " " if line else ""
+
+
+def pasted(text: str) -> str:
+    """A paste as one line: line breaks become spaces, other spacing stays (§4.2)."""
+    return text.replace("\r\n", " ").replace("\r", " ").replace("\n", " ")
+
+
 def clean(data: str) -> tuple[str, str]:
     """`data` ready for pyte (unknown sequences dropped), and an unfinished escape at its end to hold back."""
     cut = UNFINISHED.search(data)
@@ -250,9 +261,20 @@ class Terminal:
 
     def type_text(self, text: str) -> None:
         """Type `text` into the input line as one line in one write (§4.3), without Enter."""
-        line = one_line(text)
+        line = typed(text)
         if line:
             self.write(line)
+
+    def paste(self, text: str) -> None:
+        line = pasted(text)
+        if line:
+            self.write(line)
+
+    def notice(self, text: str) -> None:
+        """Show a line of Wisper's own below the program's output (it isn't sent to the program)."""
+        with self._lock:
+            self._stream.feed(f"\r\n\x1b[93m{text}\x1b[0m")
+            self._changed = True
 
     def resize(self, lines: int, columns: int) -> None:
         with self._lock:
