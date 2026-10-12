@@ -2,10 +2,10 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft rev 5 (2026-10-12): **P0 done**, the user looked at the live window (§7.3: typing lag and no scroll-back to fix); next P1 |
+| Status | Agreed (2026-10-12): **P0–P5 done, P6 written** (the user runs the remaining manual rows); File mode on hold (user, 2026-10-12), so T-FILE-1/2 and T-TURN-4 wait |
 | Date | 2026-10-12 |
 | Owner | shoonya0 |
-| Test plan | `_docs/test/deepseek-terminal.md` (written in P6) |
+| Test plan | [`_docs/test/deepseek-terminal.md`](../test/deepseek-terminal.md) |
 | Replaces | the reverted 2026-10-11 assistant design (headless `deepseek` behind New context / Send buttons, never committed) |
 
 ## 1. Problem
@@ -280,6 +280,9 @@ test (user, 2026-10-12): under D9 the narration never plays while Live captions 
    the status log.
 
 Done when: the user runs the manual plan.
+
+**Written 2026-10-12**: the plan and docs are done; the rows the user already checked in P2, P4 and P5 are
+marked passed. Left: T-TERM-4 (#14), T-TERM-6 (special keys), T-TURN-5, and the File rows (on hold).
 
 ## 7. Spike findings (P0, 2026-10-12)
 
