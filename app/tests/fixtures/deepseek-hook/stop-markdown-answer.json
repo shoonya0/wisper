@@ -1,0 +1,15 @@
+{
+  "session_id": "189a18e4-2911-4790-8e48-4f6994aa8a31",
+  "transcript_path": "C:\\Users\\USER\\.claude-deepseek\\projects\\D--projects-wisper-AI-workspace\\189a18e4-2911-4790-8e48-4f6994aa8a31.jsonl",
+  "cwd": "D:\\projects\\wisper\\AI-workspace",
+  "prompt_id": "d9d812df-a477-4598-a86c-286441352d55",
+  "permission_mode": "auto",
+  "effort": {
+    "level": "high"
+  },
+  "hook_event_name": "Stop",
+  "stop_hook_active": false,
+  "last_assistant_message": "**Fruits**\n\n- Apple\n- Banana\n- Cherry",
+  "background_tasks": [],
+  "session_crons": []
+}
