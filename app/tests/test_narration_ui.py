@@ -419,25 +419,6 @@ def test_after_a_device_error_speak_works_on_another_device(make_window, monkeyp
     pump(win, lambda: win.tts_status_var.get() == "Narration complete.")
 
 
-@pytest.mark.parametrize("captured, output, warned", [
-    (SPEAKERS, "me", True), (SPEAKERS, "both", True), (SPEAKERS, "others", False),
-    (CABLE, "others", True), (CABLE, "me", False),
-])
-def test_speak_warns_that_live_captions_will_transcribe_it(make_window, captured, output, warned):
-    win, _ = ready(make_window)
-    win.mode_var.set("Live captions (desktop audio)")
-    win.devices = [dict(captured)]                                 # the loopback device Live captions uses
-    win.device_box.config(values=[captured["label"]])
-    win.device_box.current(0)
-    win.transcribing = True                                        # a capture is running
-    choose_output(win, output)
-    win.tts_text.insert("end", PARAGRAPH)
-    win.tts_toggle()
-    assert (app.FEEDBACK_HINT in win.tts_status_var.get()) is warned
-    win.transcribing = False
-    win.tts_toggle()
-
-
 def test_progress_keeps_a_mic_error_visible(make_window):
     win, _ = ready(make_window, mics=(MIC,), piece_s=0.4)
     pump(win, lambda: win.passthrough.running)

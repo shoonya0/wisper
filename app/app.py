@@ -5,11 +5,19 @@ Three modes over one GPU-resident model:
   • Live caption — transcribe desktop/meeting audio (WASAPI loopback).
   • File        — transcribe an audio file, text appearing progressively.
 
+The text is typed into the DeepSeek terminal (the `deepseek` CLI in a pseudo-console) in the
+left pane; Wisper never presses Enter (spec 2026-10-12-deepseek-terminal). Each answer
+`deepseek` finishes comes back through a Stop hook (answers.py) and is narrated.
+
 The Whisper model is loaded once and kept in GPU memory by a single worker
 thread (whisper contexts are not thread safe, so only that thread touches it).
 """
 
+import json
+import os
 import queue
+import sys
+import tempfile
 import threading
 import time
 import tkinter as tk
@@ -19,12 +27,15 @@ from tkinter.scrolledtext import ScrolledText
 
 import numpy as np
 
+import answers
 import audio_io
 import capture
 import narrator
 import playback
 import priority
+import terminal
 import tts
+from terminal_view import TerminalView
 from whisper_native import Whisper
 
 WHISPER_DIR = Path(__file__).resolve().parent.parent / "whisper.cpp"
@@ -60,7 +71,7 @@ DEVICE_ERROR = "Audio device failed"                     # TTS status only, no d
 OUTPUT_MODES = [("me", "Only me"), ("others", "Only others"), ("both", "Both")]   # playback.MODES
 DEFAULT_OUTPUT = "both"                                  # user decision, 2026-10-10
 PASS_ERROR = "Mic to call stopped"                       # TTS status only, no dialog (N8 rule 3.4)
-FEEDBACK_HINT = "Live captions will transcribe it too"    # spec §4 "Feedback risk" (N7)
+STT_PAUSED = "Speech to text paused while narrating."   # D9: listening and narrating take turns
 CABLE_SETUP = (
     "To let a call hear the narration (Only others / Both):\n\n"
     "1. Install VB-Audio Virtual Cable (free, vb-audio.com/Cable): run the setup as "
@@ -75,6 +86,35 @@ CABLE_SETUP = (
     "(on by default when a cable is found). Pick your microphone under Mic.\n\n"
     "Use headphones: with speakers, your mic also picks up the narration and the call hears "
     "it twice.")
+
+# DeepSeek terminal (spec 2026-10-12-deepseek-terminal): the user's `deepseek` profile function,
+# run as it is (D3) in a gitignored folder of the project (D4).
+WORKSPACE = Path(__file__).resolve().parent.parent / "AI-workspace"
+HOOK_SCRIPT = Path(__file__).resolve().parent / "answers.py"
+DEEPSEEK_ENDED = "DeepSeek ended. Press Enter to start it again."
+DEEPSEEK_MISSING = "`deepseek` wasn't found: it's a function in your PowerShell profile."
+NOT_RECOGNIZED = "is not recognized"                     # PowerShell's error for an unknown command
+TERMINAL_MS = 16                                         # redraw timer: a key shows within ~16 ms (spec §7.4)
+FILE_WORDS = 100                                         # File mode types this many words, then stops (D8)
+FILE_LIMIT = f"File: typed the first {FILE_WORDS} words."
+FILE_DONE = {"limit": FILE_LIMIT, "stopped": STT_PAUSED, None: "File transcription complete."}
+
+
+
+def deepseek_argv(settings=None):
+    """PowerShell runs the profile's `deepseek` function; each argument is single-quoted (§4.1)."""
+    command = "deepseek"
+    if settings is not None:
+        command += " '--settings' '" + str(settings).replace("'", "''") + "'"
+    return ["powershell.exe", "-NoLogo", "-Command", command]
+
+
+def hook_python():
+    """python.exe for the hook: under pythonw.exe, the python.exe beside it (it reads stdin)."""
+    exe = Path(sys.executable)
+    console = exe.with_name("python.exe")
+    return console if exe.name.lower() == "pythonw.exe" and console.exists() else exe
+
 
 LANGUAGES = ["auto", "en", "hi", "es", "fr", "de", "ja", "zh", "ru", "pt", "it", "ko", "ar"]
 
@@ -119,12 +159,16 @@ class App:
         self.capture = None
         self.transcribing = False        # a live capture session is running
         self.busy = False                # worker mid-inference
-        self.last_text = ""
+        self.last_text = ""               # prompt context for the next chunk (spec §4.3: unchanged)
+        self.file_stop = threading.Event()  # D9: the narration started, the file job ends (§3.2)
+        self.terminal = None              # the DeepSeek terminal (terminal.Terminal); None until started
+        self._terminal_run = 0            # which start the "terminal_ended" results belong to
 
         # Worker owns the model. Jobs: ("model", path) | ("audio", arr, prompt)
         #                              | ("file", path) | ("stop",)
         self.jobs = queue.Queue()
-        self.results = queue.Queue()     # ("ready"|"text"|"status"|"error"|"progress"|"done", payload)
+        self.results = queue.Queue()     # ("ready"|"text"|"status"|"error"|"progress"|"done"
+        #                                   | "terminal_ended" | "ai_answer", payload)
         self.loaded_model_path = None
         self.want_model_path = None
 
@@ -137,7 +181,6 @@ class App:
         self.speaking = False             # True from Speak until the narration ends, paused or not
         self.tts_paused = False           # N9: spec 2026-10-11-narration-pause.md
         self._tts_progress = ""           # " i/n" of the piece playing, for the paused status
-        self._tts_hint = ""               # the Live captions feedback hint, if shown at Speak
         self._tts_spans = None            # N10: where each piece of the snapshot is in the box
         self._tts_snapshot = ""
         self.tts_gen = None               # generation of the narration the UI is showing
@@ -159,11 +202,15 @@ class App:
         root.geometry("1440x680")
         root.minsize(STT_MIN_W + TTS_MIN_W + SASH_W, 420)
 
+        # P4 (spec §4.4): `deepseek`'s Stop hook sends each final answer here; _poll narrates it.
+        self.inbox = answers.Inbox(lambda text: self.results.put(("ai_answer", text)))
+        self.hook_settings = self._write_hook_settings()
+
         self._apply_theme(root)
         stt_pane, tts_pane = self._build_panes(root)
         self._build_controls(stt_pane)
-        self._build_status(stt_pane)      # before the transcript so it keeps its row
-        self._build_transcript(stt_pane)
+        self._build_status(stt_pane)      # before the terminal so it keeps its row
+        self._build_terminal(stt_pane)
         self._build_tts_pane(tts_pane)
 
         root.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -174,7 +221,9 @@ class App:
         self.tts_jobs.put(("load",))   # in the background: the window opens at once, STT doesn't wait
         self._on_mode_change()
         self._request_model()       # load the initial model
+        self._start_terminal()
         self._poll()
+        self._draw_terminal()
 
     # ------------------------------------------------------------------ theme
 
@@ -456,12 +505,6 @@ class App:
         self.file_label = ttk.Label(row2, text="No file selected.")
         self._row2 = row2
 
-        actions = ttk.Frame(parent, padding=(8, 6))
-        actions.pack(fill="x")
-        ttk.Button(actions, text="Copy all", command=self.copy_all).pack(side="right")
-        ttk.Button(actions, text="Clear", command=self.clear).pack(side="right", padx=4)
-        ttk.Button(actions, text="Save…", command=self.save).pack(side="right")
-
     @staticmethod
     def _make_text_box(parent):
         box = ScrolledText(
@@ -481,13 +524,14 @@ class App:
             pass
         return box
 
-    def _build_transcript(self, parent):
-        # Read-only for the user: starts disabled; only the app writes to it
-        # (via _write_locked). Text stays selectable so Ctrl+C / Copy still work.
-        self.text = self._make_text_box(parent)
-        self.text.configure(state="disabled")
-        self.text.bind("<Control-a>", self._select_all)
-        self.text.bind("<Control-c>", lambda e: self.text.event_generate("<<Copy>>"))
+    def _build_terminal(self, parent):
+        # The DeepSeek terminal takes the transcript box's place (D2): speech is typed into it.
+        self.term_view = TerminalView(
+            parent, {"fg": DARK["fg"], "bg": DARK["surface"], "sel": DARK["sel"], "border": DARK["border"]},
+            on_key=self._terminal_key, on_paste=self._terminal_paste,
+            on_scroll=lambda lines: self.terminal and self.terminal.scroll(lines),
+            on_resize=lambda lines, columns: self.terminal and self.terminal.resize(lines, columns))
+        self.term_view.widget.pack(fill="both", expand=True, padx=8, pady=(6, 0))
 
     def _build_status(self, parent):
         status = ttk.Frame(parent, padding=(8, 4))
@@ -554,15 +598,12 @@ class App:
             self.start_file()
             return
         if self.transcribing:
-            self.transcribing = False
-            if self.capture:
-                self.capture.stop()
-                self.capture = None
-            self.start_btn.config(text="▶  Start")
+            self._stop_capture()
         else:
             if not self.devices:
                 messagebox.showerror("No device", "No audio device found for this mode.")
                 return
+            self._pause_narration()
             device = self.devices[self.device_box.current()]
             try:
                 self.capture = capture.Capture(
@@ -574,6 +615,27 @@ class App:
                 return
             self.transcribing = True
             self.start_btn.config(text="⏸  Stop")
+
+    def _stop_capture(self):
+        self.transcribing = False
+        if self.capture:
+            self.capture.stop()
+            self.capture = None
+        self.start_btn.config(text="▶  Start")
+
+    def _stop_listening(self):
+        """D9: the narration is about to start or resume, so speech to text stops (§3.2, §4.6).
+
+        A file job ends at its next step; the words already typed stay."""
+        if self.transcribing:
+            self._stop_capture()
+            self.flash(STT_PAUSED, 5)
+        self.file_stop.set()              # read only by a file job; start_file clears it
+
+    def _pause_narration(self):
+        """D9: listening is about to start, so a playing narration pauses; ▶ Resume continues it."""
+        if self.speaking and not self.tts_paused:
+            self.tts_pause()
 
     def _on_audio_chunk(self, audio):
         # Called from the capture thread; hand off to the worker.
@@ -591,22 +653,85 @@ class App:
         if not getattr(self, "selected_file", None):
             messagebox.showinfo("Choose a file", "Pick an audio file first.")
             return
+        self._pause_narration()
+        self.file_stop.clear()
         self.start_btn.config(state="disabled")
         self.jobs.put(("file", self.selected_file))
 
-    def copy_all(self):
-        self.root.clipboard_clear()
-        self.root.clipboard_append(self.text.get("1.0", "end-1c"))
-        self.flash("Copied transcript to clipboard.")
+    # --------------------------------------------------------------- DeepSeek terminal
 
-    def clear(self):
-        self._write_locked(lambda: self.text.delete("1.0", "end"))
-        self.last_text = ""
+    def _start_terminal(self):
+        """Start `deepseek` in the terminal (at start-up, and on Enter after it ended)."""
+        self._terminal_run += 1
+        run = self._terminal_run
+        lines, columns = self.term_view.size
+        try:
+            WORKSPACE.mkdir(exist_ok=True)
+            self.terminal = terminal.Terminal(
+                deepseek_argv(self.hook_settings), str(WORKSPACE), lines=lines, columns=columns,
+                on_exit=lambda: self.results.put(("terminal_ended", run)))
+        except Exception as e:            # no powershell.exe, no pseudo-console: say so in its place
+            self.terminal = None
+            self.term_view.message(f"Couldn't start DeepSeek: {e}")
 
-    def save(self):
-        path = self._save_text(self.text)
-        if path:
-            self.flash(f"Saved to {path}")
+    def _write_hook_settings(self):
+        """The `--settings` file with the Stop hook (§4.4), outside the workspace `deepseek` sees.
+
+        Returns its path, or None if it can't be written: `deepseek` then runs without narration."""
+        path = Path(tempfile.gettempdir()) / f"wisper-deepseek-hook-{os.getpid()}.json"
+        settings = answers.hook_settings(hook_python(), HOOK_SCRIPT, self.inbox.port, self.inbox.token)
+        try:
+            path.write_text(json.dumps(settings, indent=2), encoding="utf-8")
+        except OSError:
+            return None
+        return path
+
+    def _narrate_answer(self, markdown):
+        """A DeepSeek answer replaces the narration text and is spoken from the start (§4.5)."""
+        text = answers.plain_text(markdown)
+        if not text:
+            return                        # e.g. an answer of only Markdown marks: the box is unchanged
+        self.tts_stop()                   # playing or paused: it ends, the new answer wins
+        self.tts_text.delete("1.0", "end")
+        self.tts_text.insert("1.0", text)
+        if self.speak_btn.instate(["!disabled"]):
+            self.tts_toggle()
+        else:                             # Kokoro missing or still loading: the text waits in the box
+            self.tts_status_var.set("DeepSeek's answer is in the box; narration isn't ready.")
+
+    def _terminal_ended(self, run):
+        term = self.terminal
+        if term is None or run != self._terminal_run:
+            return                        # an older run, already replaced
+        missing = any(NOT_RECOGNIZED in line and "deepseek" in line for line in term.text())
+        term.notice(DEEPSEEK_MISSING if missing else DEEPSEEK_ENDED)
+
+    def _terminal_key(self, keysym, char, state):
+        term = self.terminal
+        if term is not None and term.alive:
+            data = terminal.key_bytes(keysym, char, state)
+            if data:
+                term.write(data)
+        elif keysym == "Return":
+            if term is not None:
+                term.close()
+            self._start_terminal()
+
+    def _terminal_paste(self, text):
+        if self.terminal is not None and self.terminal.alive:
+            self.terminal.paste(text)
+
+    def _type_speech(self, text):
+        """Type a transcribed chunk at the end of `deepseek`'s input line, never Enter (D7)."""
+        if self.terminal is not None and self.terminal.alive:
+            self.terminal.type_text(text)
+        else:
+            self.flash("DeepSeek isn't running: press Enter in the terminal to start it.", 5)
+
+    def _draw_terminal(self):
+        if self.terminal is not None:
+            self.term_view.draw(self.terminal.snapshot())
+        self.root.after(TERMINAL_MS, self._draw_terminal)
 
     def tts_copy_all(self):
         self.root.clipboard_clear()
@@ -635,6 +760,7 @@ class App:
         except ValueError as e:           # Only others / Both without an Others device (spec §5.3)
             self.tts_status_var.set(str(e))
             return
+        self._stop_listening()
         self._tts_snapshot, self._tts_spans = text, tts.piece_spans(text)
         self._clear_marks()
         self.tts_gen = self.narrator.begin()
@@ -643,18 +769,10 @@ class App:
                            float(self.speed_var.get()), devices))
         self.speaking = True
         self.tts_paused = False
-        self._tts_progress = self._tts_hint = ""
+        self._tts_progress = ""
         self.speak_btn.config(text="⏸  Pause")
         self.stop_btn.config(state="normal")
         self.tts_status_var.set("Speaking…")
-        # Loopback hears what plays on its device: if the narration plays there too, Live
-        # captions transcribes it (spec §4 feedback risk).
-        if self.transcribing and SOURCE_KIND.get(self.mode_var.get()) == "loopback":
-            i = self.device_box.current()
-            heard = self.devices[i]["label"] if 0 <= i < len(self.devices) else None
-            if heard in {d["label"] for d in devices if d}:
-                self._tts_hint = f" ({FEEDBACK_HINT})"
-                self.tts_status_var.set(f"Speaking…{self._tts_hint}")
 
     def tts_pause(self):
         """Silence every device within one block; Resume continues from there (N9)."""
@@ -664,10 +782,11 @@ class App:
         self.tts_status_var.set(f"Paused{self._tts_progress}.")
 
     def tts_resume(self):
+        self._stop_listening()
         self.player.resume()
         self.tts_paused = False
         self.speak_btn.config(text="⏸  Pause")
-        self.tts_status_var.set(f"Speaking{self._tts_progress}…{self._tts_hint}")
+        self.tts_status_var.set(f"Speaking{self._tts_progress}…")
 
     def tts_stop(self):
         """Stop the narration, playing or paused (Stop, Clear, a voice/speed/mode/device change).
@@ -781,19 +900,35 @@ class App:
         try:
             self.results.put(("status", f"Decoding {Path(path).name}…"))
             audio = audio_io.decode_to_16k_mono(path)
-            self.results.put(("text", f"\n\n--- {Path(path).name} ---\n"))
+            typed = 0                     # words typed so far; the file stops after FILE_WORDS (D8)
+            full = False
 
             def on_text(text):
+                nonlocal typed, full
                 text = text.strip()
-                if text and not is_junk(text):
-                    self.results.put(("text", text + " "))
+                if full or not text or is_junk(text):
+                    return
+                words = text.split()
+                if typed + len(words) > FILE_WORDS:   # a word past the limit: the file has more
+                    full = True
+                    words = words[:FILE_WORDS - typed]
+                    if not words:
+                        return
+                typed += len(words)
+                self.results.put(("text", " ".join(words) + " "))
 
             # One pass over the whole file: whisper.cpp seeks by its own timestamps, so
             # no words are cut or repeated at window edges (known issue 1).
             model.transcribe_long(audio, self.language, on_text,
-                                  lambda pct: self.results.put(("progress", pct)))
-            self.results.put(("progress", 100))
-            self.results.put(("done", None))
+                                  lambda pct: self.results.put(("progress", pct)),
+                                  should_stop=lambda: full or self.file_stop.is_set())
+            if full:
+                self.results.put(("done", "limit"))
+            elif self.file_stop.is_set():
+                self.results.put(("done", "stopped"))
+            else:
+                self.results.put(("progress", 100))
+                self.results.put(("done", None))
         except Exception as e:
             self.results.put(("error", f"File transcription failed: {e}"))
         finally:
@@ -879,7 +1014,7 @@ class App:
                     continue
                 if not self.tts_status_var.get().startswith("Speaking"):
                     continue              # keep a message shown meanwhile (a mic error, N8; "Paused", N9)
-                self.tts_status_var.set(f"Speaking{self._tts_progress}…{self._tts_hint}")
+                self.tts_status_var.set(f"Speaking{self._tts_progress}…")
             elif kind == "tts_done":      # a stopped narration was already ended by tts_stop()
                 self._narration_ended("Narration complete.")
             elif kind == "tts_error":
@@ -887,27 +1022,15 @@ class App:
                 if not payload[1].startswith(DEVICE_ERROR):
                     messagebox.showerror("Wisper", payload[1])
 
-    def _write_locked(self, fn):
-        """Run a mutation on the (normally disabled) transcript, then re-lock it."""
-        self.text.configure(state="normal")
-        try:
-            fn()
-        finally:
-            self.text.configure(state="disabled")
-
-    def _append(self, text):
-        at_bottom = self.text.yview()[1] >= 0.999
-        existing = self.text.get("1.0", "end-1c")
-        sep = "" if not existing or existing.endswith(("\n", " ")) else " "
-        self._write_locked(lambda: self.text.insert("end", sep + text))
-        if at_bottom:
-            self.text.see("end")
-
     def _poll(self):
         while not self.results.empty():
             kind, payload = self.results.get()
             if kind == "text":
-                self._append(payload)
+                self._type_speech(payload)
+            elif kind == "terminal_ended":
+                self._terminal_ended(payload)
+            elif kind == "ai_answer":
+                self._narrate_answer(payload)
             elif kind == "ready":
                 self.loaded_model_path = self.want_model_path
                 self.start_btn.config(state="normal")
@@ -916,7 +1039,7 @@ class App:
                 self.flash(f"Transcribing file… {payload}%", 60)
             elif kind == "done":
                 self.start_btn.config(state="normal")
-                self.flash("File transcription complete.", 4)
+                self.flash(FILE_DONE[payload], 4)
             elif kind == "error":
                 self.status_var.set(payload)
                 messagebox.showerror("Wisper", payload)
@@ -938,6 +1061,11 @@ class App:
     def on_close(self):
         if self.capture:
             self.capture.stop()
+        if self.terminal is not None:
+            self.terminal.close()         # ends `deepseek` and what it started in the pseudo-console
+        self.inbox.close()
+        if self.hook_settings is not None:
+            self.hook_settings.unlink(missing_ok=True)
         self.jobs.put(("stop",))
         self.narrator.stop()
         self.player.stop()
@@ -951,6 +1079,7 @@ class App:
 
 
 def main():
+    priority.kill_children_with_me()     # D10: `deepseek` and all it starts end with Wisper, however it ends
     priority.boost_process()
     root = tk.Tk()
     App(root)

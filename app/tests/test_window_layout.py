@@ -40,7 +40,7 @@ def test_starts_in_live_captions_with_small_en_and_af_heart_at_1_0(window):
 
 def test_speech_to_text_left_text_to_speech_right(window):
     stt, tts = panes_of(window)
-    for w in (window.start_btn, window.model_box, window.lang_box, window.text, window.level_bar):
+    for w in (window.start_btn, window.model_box, window.lang_box, window.term_view.widget, window.level_bar):
         assert is_descendant(w, stt), f"{w} should be in the left (speech to text) pane"
     assert stt.winfo_rootx() < tts.winfo_rootx()
 
@@ -65,7 +65,8 @@ def test_every_stt_control_visible_at_minimum_window_size(window):
     root.update()
     assert (root.winfo_width(), root.winfo_height()) == (width, height), "window didn't reach its minimum size"
     stt, _ = panes_of(window)
-    controls = [window.start_btn, window.model_box, window.lang_box, window.device_box, window.level_bar]
+    controls = [window.start_btn, window.model_box, window.lang_box, window.device_box, window.level_bar,
+                window.term_view.widget]
     cut = [str(w) for w in controls if not inside(w, stt)]
     assert not cut, f"cut off at the minimum size {width}x{height}: {cut}"
 
@@ -73,10 +74,6 @@ def test_every_stt_control_visible_at_minimum_window_size(window):
 # ---- Narration box (spec N2, test plan T-UI-2): its own Save/Clear/Copy all, no audio yet.
 
 HINDI = "नमस्ते दुनिया। Hello world."
-
-
-def put_transcript(win, text):
-    win._write_locked(lambda: win.text.insert("end", text))
 
 
 def test_narration_box_is_editable_and_speak_is_disabled(window):
@@ -96,7 +93,6 @@ def test_ctrl_a_selects_all_in_the_narration_box(window):
 
 
 def test_narration_clear_copy_save_only_touch_the_narration_box(window, monkeypatch, tmp_path):
-    put_transcript(window, "transcript stays")
     window.tts_text.insert("end", HINDI)
     stt_status = window.status_var.get()
 
@@ -114,16 +110,7 @@ def test_narration_clear_copy_save_only_touch_the_narration_box(window, monkeypa
 
     window.tts_clear()
     assert window.tts_text.get("1.0", "end-1c") == ""
-    assert window.text.get("1.0", "end-1c") == "transcript stays"
     assert window.status_var.get() == stt_status, "TTS actions must not write the STT status line"
-
-
-def test_transcript_clear_leaves_the_narration_box_alone(window):
-    put_transcript(window, "transcript")
-    window.tts_text.insert("end", "narration")
-    window.clear()
-    assert window.text.get("1.0", "end-1c") == ""
-    assert window.tts_text.get("1.0", "end-1c") == "narration"
 
 
 def test_save_cancelled_writes_nothing(window, monkeypatch):

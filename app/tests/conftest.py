@@ -1,9 +1,10 @@
-"""Shared fixture: the real Tk window with a fake Whisper, PyAudio, Kokoro engine and output.
+"""Shared fixture: the real Tk window with a fake Whisper, PyAudio, Kokoro engine, output and terminal.
 
 No GPU, model file or audio device is touched. Used by test_window_layout.py and
 test_narration_ui.py.
 """
 
+import gc
 import time
 import tkinter as tk
 
@@ -11,6 +12,7 @@ import numpy as np
 import pytest
 
 import app
+import terminal
 
 
 class FakeWhisper:
@@ -96,6 +98,56 @@ class FakeInput:
         self.closed = True
 
 
+class FakeTerminal:
+    """Stands in for terminal.Terminal: records what's written; `end()` acts as the program ending.
+
+    `screen` is what `text()` returns (e.g. PowerShell's "not recognized" error).
+    """
+
+    instances = []
+
+    def __init__(self, argv, cwd, *, lines=24, columns=80, history=5000, env=None, on_output=None, on_exit=None):
+        self.argv, self.cwd, self.size, self.on_exit = argv, cwd, (lines, columns), on_exit
+        self.written, self.notices, self.scrolled = [], [], 0
+        self.screen = []
+        self.alive, self.closed = True, False
+        FakeTerminal.instances.append(self)
+
+    def write(self, text):
+        self.written.append(text)
+
+    def type_text(self, text):
+        if line := terminal.typed(text):
+            self.write(line)
+
+    def paste(self, text):
+        if line := terminal.pasted(text):
+            self.write(line)
+
+    def resize(self, lines, columns):
+        self.size = (lines, columns)
+
+    def scroll(self, lines):
+        self.scrolled += lines
+
+    def snapshot(self):
+        return terminal.Snapshot(*self.size, {}, None, 0, 0)
+
+    def text(self):
+        return list(self.screen)
+
+    def notice(self, text):
+        self.notices.append(text)
+
+    def end(self):
+        self.alive = False
+        if self.on_exit:
+            self.on_exit()
+
+    def close(self):
+        self.alive, self.closed = False, True
+
+
 SPEAKERS = {"index": 0, "name": "Speakers", "label": "Speakers", "defaultSampleRate": 24000,
             "maxOutputChannels": 2}
 MIC = {"index": 2, "name": "Microphone (Realtek)", "label": "Microphone (Realtek)", "defaultSampleRate": 24000,
@@ -126,6 +178,8 @@ def make_window(monkeypatch):
         monkeypatch.setattr(app.playback, "list_outputs", lambda pa: list(outputs))
         monkeypatch.setattr(app.playback, "PaStream", FakeOutput)
         monkeypatch.setattr(app.playback, "PaInput", FakeInput)
+        monkeypatch.setattr(app.terminal, "Terminal", FakeTerminal)          # never a real `deepseek`
+        FakeTerminal.instances = []
         FakeOutput.instances = []
         FakeInput.instances, FakeInput.failing = [], None
         # No skip on TclError: Wisper is Windows-only, where Tk always has a display, and a
@@ -154,6 +208,14 @@ def make_window(monkeypatch):
             worker.join(timeout=5)
             assert not worker.is_alive(), f"{worker.name} didn't stop after on_close()"
         assert not win.passthrough.running, "the mic pass-through didn't stop after on_close()"
+        assert win.terminal is None or win.terminal.closed, "the DeepSeek terminal didn't end with the window"
+    # An App lives in reference cycles (lambdas holding self), so only the cyclic GC frees its Tk
+    # interpreter, on whichever thread triggers it. Freed from a worker thread of the next test's
+    # window, Tcl aborts the run ("Tcl_AsyncDelete: async handler deleted by the wrong thread").
+    # Collect here, on the main thread that created it.
+    windows.clear()
+    win = root = None
+    gc.collect()
 
 
 @pytest.fixture

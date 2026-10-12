@@ -17,6 +17,8 @@ WHISPER_SAMPLING_GREEDY = 0
 # (whisper_context *, whisper_state *, int n_new | progress, void * user_data)
 SegmentCallback = C.CFUNCTYPE(None, C.c_void_p, C.c_void_p, C.c_int, C.c_void_p)
 ProgressCallback = C.CFUNCTYPE(None, C.c_void_p, C.c_void_p, C.c_int, C.c_void_p)
+# ggml_abort_callback in ggml.h: bool (*)(void * data); true aborts the computation.
+AbortCallback = C.CFUNCTYPE(C.c_bool, C.c_void_p)
 
 # Fast speech is about 30 characters/s. On a short tail of audio, long-form decoding can
 # "hear" a whole earlier sentence in a fraction of a second (measured: 108 chars in 0.62 s).
@@ -187,13 +189,16 @@ class Whisper:
             parts.append(self.lib.whisper_full_get_segment_text(self.ctx, i))
         return b"".join(parts).decode("utf-8", "replace").strip()
 
-    def transcribe_long(self, audio16k, language, on_text, on_progress=None, no_speech_max=0.6):
+    def transcribe_long(self, audio16k, language, on_text, on_progress=None, no_speech_max=0.6,
+                        should_stop=None):
         """Transcribe a whole file in one whisper_full call, streaming text as it's decoded.
 
         whisper.cpp walks long audio in 30 s steps and seeks by its own timestamps, so
         nothing is cut mid-word and nothing is stitched here. on_text(str) gets each new
         segment and on_progress(percent) the progress. Both run on the calling thread,
         inside whisper_full. An exception in either is re-raised after whisper_full returns.
+        When should_stop() turns true, whisper.cpp aborts at its next encode or decode step,
+        no more text is passed on, and the call returns normally.
         """
         decoder = codecs.getincrementaldecoder("utf-8")("replace")  # a character can span segments
         errors = []
@@ -201,6 +206,8 @@ class Whisper:
         @SegmentCallback
         def segment_cb(ctx, state, n_new, user_data):
             try:
+                if should_stop and should_stop():
+                    return
                 n = self.lib.whisper_full_n_segments(self.ctx)
                 for i in range(n - n_new, n):
                     if self.lib.whisper_full_get_segment_no_speech_prob(self.ctx, i) > no_speech_max:
@@ -224,14 +231,22 @@ class Whisper:
             except Exception as e:
                 errors.append(e)
 
-        self._full(audio16k, language, "", False, segment_cb, progress_cb)
+        @AbortCallback
+        def abort_cb(user_data):
+            try:
+                return bool(should_stop and should_stop())
+            except Exception as e:
+                errors.append(e)
+                return True
+
+        self._full(audio16k, language, "", False, segment_cb, progress_cb, abort_cb if should_stop else None)
         tail = decoder.decode(b"", final=True)
-        if tail:
+        if tail and not (should_stop and should_stop()):
             on_text(tail)
         if errors:
             raise errors[0]
 
-    def _full(self, audio16k, language, prompt, translate, segment_cb=None, progress_cb=None):
+    def _full(self, audio16k, language, prompt, translate, segment_cb=None, progress_cb=None, abort_cb=None):
         """Run whisper_full with Wisper's settings. The callbacks must stay alive until it returns."""
         audio = np.ascontiguousarray(audio16k, dtype=np.float32)
         p = WhisperFullParams.from_buffer_copy(self._defaults)
@@ -250,11 +265,13 @@ class Whisper:
             p.new_segment_callback = C.cast(segment_cb, C.c_void_p).value
         if progress_cb:
             p.progress_callback = C.cast(progress_cb, C.c_void_p).value
+        if abort_cb:
+            p.abort_callback = C.cast(abort_cb, C.c_void_p).value
 
         rc = self.lib.whisper_full(
             self.ctx, p, audio.ctypes.data_as(C.POINTER(C.c_float)), len(audio)
         )
-        if rc != 0:
+        if rc != 0 and not (abort_cb and abort_cb(None)):   # an abort we asked for isn't a failure
             raise RuntimeError(f"whisper_full failed ({rc})")
 
     def close(self):

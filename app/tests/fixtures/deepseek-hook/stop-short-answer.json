@@ -1,0 +1,15 @@
+{
+  "session_id": "6846648e-24cd-44af-8a0f-e62f7f3f865d",
+  "transcript_path": "C:\\Users\\USER\\.claude-deepseek\\projects\\D--projects-wisper-AI-workspace\\6846648e-24cd-44af-8a0f-e62f7f3f865d.jsonl",
+  "cwd": "D:\\projects\\wisper\\AI-workspace",
+  "prompt_id": "eeb5a0f4-b9e2-4b75-a07d-19c9a55f0e1f",
+  "permission_mode": "auto",
+  "effort": {
+    "level": "high"
+  },
+  "hook_event_name": "Stop",
+  "stop_hook_active": false,
+  "last_assistant_message": "OK",
+  "background_tasks": [],
+  "session_crons": []
+}
