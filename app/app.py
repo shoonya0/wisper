@@ -89,6 +89,8 @@ DEEPSEEK_ENDED = "DeepSeek ended. Press Enter to start it again."
 DEEPSEEK_MISSING = "`deepseek` wasn't found: it's a function in your PowerShell profile."
 NOT_RECOGNIZED = "is not recognized"                     # PowerShell's error for an unknown command
 TERMINAL_MS = 16                                         # redraw timer: a key shows within ~16 ms (spec §7.4)
+FILE_WORDS = 100                                         # File mode types this many words, then stops (D8)
+FILE_LIMIT = f"File: typed the first {FILE_WORDS} words."
 
 LANGUAGES = ["auto", "en", "hi", "es", "fr", "de", "ja", "zh", "ru", "pt", "it", "ko", "ar"]
 
@@ -831,19 +833,33 @@ class App:
         try:
             self.results.put(("status", f"Decoding {Path(path).name}…"))
             audio = audio_io.decode_to_16k_mono(path)
-            self.results.put(("text", f"\n\n--- {Path(path).name} ---\n"))
+            typed = 0                     # words typed so far; the file stops after FILE_WORDS (D8)
+            full = False
 
             def on_text(text):
+                nonlocal typed, full
                 text = text.strip()
-                if text and not is_junk(text):
-                    self.results.put(("text", text + " "))
+                if full or not text or is_junk(text):
+                    return
+                words = text.split()
+                if typed + len(words) > FILE_WORDS:   # a word past the limit: the file has more
+                    full = True
+                    words = words[:FILE_WORDS - typed]
+                    if not words:
+                        return
+                typed += len(words)
+                self.results.put(("text", " ".join(words) + " "))
 
             # One pass over the whole file: whisper.cpp seeks by its own timestamps, so
             # no words are cut or repeated at window edges (known issue 1).
             model.transcribe_long(audio, self.language, on_text,
-                                  lambda pct: self.results.put(("progress", pct)))
-            self.results.put(("progress", 100))
-            self.results.put(("done", None))
+                                  lambda pct: self.results.put(("progress", pct)),
+                                  should_stop=lambda: full)
+            if full:
+                self.results.put(("done", "limit"))
+            else:
+                self.results.put(("progress", 100))
+                self.results.put(("done", None))
         except Exception as e:
             self.results.put(("error", f"File transcription failed: {e}"))
         finally:
@@ -952,7 +968,7 @@ class App:
                 self.flash(f"Transcribing file… {payload}%", 60)
             elif kind == "done":
                 self.start_btn.config(state="normal")
-                self.flash("File transcription complete.", 4)
+                self.flash(FILE_LIMIT if payload == "limit" else "File transcription complete.", 4)
             elif kind == "error":
                 self.status_var.set(payload)
                 messagebox.showerror("Wisper", payload)

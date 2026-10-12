@@ -90,6 +90,13 @@ def test_deepseek_not_found_says_so(window):
     assert t.notices == [app.DEEPSEEK_MISSING]
 
 
+def test_a_file_cut_at_100_words_says_so(window):                   # §3.1 File mode, P3
+    window.start_btn.config(state="disabled")
+    window.results.put(("done", "limit"))
+    pump(window, lambda: window.status_var.get() == "File: typed the first 100 words.")
+    assert str(window.start_btn["state"]) == "normal"
+
+
 def test_speech_while_deepseek_is_down_is_not_typed(window):
     t = term(window)
     t.alive = False
