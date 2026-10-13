@@ -9,7 +9,7 @@ DONE or SKIPPED.
 | Started | 2026-10-07 |
 | Target | `D:\projects\wisper` |
 | Playbook | `D:\projects\wisper\stepsForCreatingApp` (removed from Wisper 2026-10-07; its edits were merged into `D:\projects\stepsForCreatingApp`) |
-| OS / shell | `win32` (x64, Windows 11) / Bash (Git Bash) |
+| OS / shell | `win32` (x64) / Bash (Git Bash) |
 | Mode | EXISTING+AI (merge: keep `.claude/skills/optimized-app-research`) |
 | Stack | Python 3.14 (Tkinter, ctypes → whisper.dll); whisper.cpp (C/C++, Vulkan) is an upstream clone, not project code |
 | Platforms (CI matrix) | Windows desktop → `windows-latest` |
@@ -32,7 +32,7 @@ re-enable condition) · `BLOCKED` (with reason)
 | uv / pipx / pip | no | SKIPPED | code-review-graph already installed; venv pip used for dev tools | — |
 | code-review-graph | yes | DONE | 2.3.9 | pre-installed |
 | agent-browser (+ Chrome) | no | SKIPPED | Tkinter UI, no web renderer → UI verification is manual | — |
-| stack toolchain | yes | DONE | app/.venv Python 3.12.10; ruff 0.16.10, pytest 9.1.1, pyright 1.1.414, pre-commit 4.6.2 (`app/requirements-dev.txt`); import-linter 2.15 installed but unused (needs packages) | agent (pip, user OK) |
+| stack toolchain | yes | DONE | app/.venv Python 3.12; ruff 0.16.10, pytest 9.1.1, pyright 1.1.414, pre-commit 4.6.2 (`app/requirements-dev.txt`); import-linter 2.15 installed but unused (needs packages) | agent (pip, user OK) |
 
 ## Steps
 
@@ -122,7 +122,7 @@ At `a1dc6b3` + harness tests:
 
 - Covered by automated checks: hook stdin tests (H3, 8/8), `node tools/verify.mjs` (H2,
   V3), JSON/YAML parse (H4, H11), architecture-rule probe (H9).
-- Verified live in Claude Code on Windows 11: protect hook blocks, graph MCP connected
+- Verified live in Claude Code on Windows: protect hook blocks, graph MCP connected
   (85 nodes), `/verify-change` evidence table, SessionStart output, Stop hook with no pending block.
 - Verified later (2026-10-09): guard-shell live block; CI on GitHub (PRs #1, #2 and `master`).
 - Not verified: macOS/Linux (Windows-only project, not run there).

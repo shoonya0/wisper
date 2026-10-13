@@ -74,9 +74,9 @@ Claims are marked **VERIFIED** (run or read in code) or **ASSUMED**.
   `pythonw` command but doesn't start the app (reported 2026-10-11, cause not found yet).
 - **Setup (fresh clone):** `py -3.12 -m venv app\.venv`, then
   `app\.venv\Scripts\python.exe -m pip install -r app\requirements-dev.txt`. The venv
-  is Python 3.12.10 (VERIFIED).
+  is Python 3.12 (VERIFIED).
 - **Engine (gitignored, rebuild if missing).** This needs the Vulkan SDK (for `glslc`)
-  and CMake. The current build used Visual Studio 18 2026 (VERIFIED from CMakeCache):
+  and CMake, and the Visual Studio C++ build tools:
   ```bat
   git clone https://github.com/ggml-org/whisper.cpp && cd whisper.cpp && git checkout 6e4ab85
   cmake -B build -DGGML_VULKAN=1

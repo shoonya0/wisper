@@ -241,7 +241,7 @@ Stop/Clear (UI thread): narrator.stop() → sets stop Event + gen += 1 → Playe
 - On close: stop the narration, put `("stop",)` on `tts_jobs`, then close the streams.
 - `priority.boost_process()` already raises the process priority. onnxruntime intra-op
   threads are capped at **`intra_op_num_threads = 4`** (N0: as fast as 6 on the
-  i5-10400F, and leaves 2 cores free) so the UI and the STT worker stay responsive.
+  test CPU, and leaves cores free) so the UI and the STT worker stay responsive.
   The session uses `providers=["CPUExecutionProvider"]` explicitly.
 
 ### 5.5 Errors and missing files

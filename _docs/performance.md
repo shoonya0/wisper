@@ -51,7 +51,7 @@ For profiling or optimization work, use the project skill
 
 Measured, **VERIFIED**. Kokoro runs on the **CPU only**, because the GPU is reserved for
 Whisper (user decision, [ADR 0001](./adr/0001-tts-engine-kokoro-onnx.md)). Machine:
-Intel i5-10400F (6 cores / 12 threads), 16 GB RAM, Windows 11, power plan "performance".
+a mid-range desktop CPU, power plan "performance".
 `kokoro-onnx` 0.6.1, onnxruntime 1.30.0, `CPUExecutionProvider`, voice `af_heart`,
 speed 1.0. Every timing is a full `Kokoro.create()` call (phonemize + model + trim)
 unless a table says otherwise. RTF = synthesis time ÷ audio length (lower is faster).
