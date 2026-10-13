@@ -12,7 +12,7 @@ It also speaks: the right-hand pane reads typed or pasted text aloud with **Koko
 cable, or both. With "Send my mic to the call", the call hears your voice and the
 narration together. Speak, Pause and Resume share one button (Ctrl+Enter), and Stop ends the narration.
 
-**DeepSeek terminal** (branch `feat/deepseek-terminal` until it's merged): the left pane runs
+**DeepSeek terminal**: the left pane runs
 the `deepseek` command line (Claude Code talking to DeepSeek's API). What you say is typed into
 its prompt (never sent: you press Enter), and each answer it finishes is read aloud.
 
@@ -61,7 +61,6 @@ All commands run from a normal Command Prompt (`cmd`) unless marked PowerShell.
 ```bat
 git clone https://github.com/shoonya0/wisper.git
 cd wisper
-git checkout feat/deepseek-terminal   & rem only for the DeepSeek terminal, until it's merged into master
 ```
 
 ### 2. Python environment

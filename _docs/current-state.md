@@ -1,13 +1,13 @@
 # Wisper: current state (snapshot 2026-10-13)
 
 Snapshot taken at `46664f5` on `master` (narration N0–N10 merged: PRs #1, #3, #4, #5, #6, #8, #9, #10, #13; File-mode
-fix PR #2; start-up defaults and run docs PR #11). Open issues: #12 (fixed on the branch below, 2026-10-13; closes when it's merged). Closed by hand (user, 2026-10-12): #14, #15, #16, fixed on the branch below and verified.
-Since then, on branch `feat/deepseek-terminal` (2026-10-12): the DeepSeek terminal spec, its P0 spike, P1
+fix PR #2; start-up defaults and run docs PR #11). Open issues: #12 (fixed on `feat/deepseek-terminal`, 2026-10-13; closes when its PR merges). Closed by hand (user, 2026-10-12): #14, #15, #16, fixed on the branch below and verified.
+Then the DeepSeek terminal, **merged 2026-10-12 (PR #17)**: the spec, its P0 spike, P1
 (`app/terminal.py`), P2 (the terminal replaces the transcript box), the #14 fix (Ctrl+A), P3 (File mode stops at
 100 words), P4 (answers narrated), P5 (taking turns, Job Object), P6 (manual test plan) and the prompt editing like a
-text box (#15, #16). On 2026-10-13: `deepseek` walled off from Wisper's files in `AI_workspace` (D12, the folder
+text box (#15, #16). On 2026-10-13, on `feat/deepseek-terminal` again (PR open): `deepseek` walled off from Wisper's files in `AI_workspace` (D12, the folder
 renamed from `AI-workspace`), the root README rewritten as a from-scratch setup and team-workflow guide, and
-the #12 fix (Live captions sends short phrases); no PR yet.
+the #12 fix (Live captions sends short phrases).
 One page; update it when an increment lands.
 Claims are marked **VERIFIED** (run or read in code) or **ASSUMED**.
 
@@ -159,7 +159,7 @@ Compare new runs against this list **by test name**.
     sound, because loopback sends no blocks in silence. When no block comes for 0.2 s, the chunk
     now goes out if it has ≥ `min_speech_s` (0.35 s) of speech; the 2 s minimum still applies
     while audio keeps arriving. VERIFIED on the GPU: Kokoro's 1.17 s "hi how are you" → one chunk
-    0.22 s after the audio stops → small.en "Hi, how are you?". Closes when the branch is merged.
+    0.22 s after the audio stops → small.en "Hi, how are you?". Closes when its PR merges.
 11. **`app\run.bat` doesn't start the app** (reported 2026-10-11, cause not found): it runs
     the same `pythonw` command as the documented one; LF line endings were ruled out. Run
     from `app\` with `.venv\Scripts\pythonw.exe app.py` instead.
@@ -180,7 +180,7 @@ Compare new runs against this list **by test name**.
 
 ## Next task
 
-- **Next: open the DeepSeek terminal PR** (`feat/deepseek-terminal` → `master`; it contains the fixes for #14, #15, #16, already closed, and #12, which the PR closes).
+- **Next: merge the D12 + #12 + README PR** (`feat/deepseek-terminal` → `master`; it closes #12). The DeepSeek terminal itself merged on 2026-10-12 (PR #17, fixes for #14, #15, #16).
   **Pending manual checks** (user): T-TERM-9 (D12: `deepseek` knows nothing about Wisper) and #12 (Live captions:
   a 1–2 s phrase from another app is typed within about a second; Wisper's own Speak can't test it, P5).
   P0–P6 are done (2026-10-12): the user ran the manual plan
