@@ -83,7 +83,7 @@ independent leaves: each depends only on third-party libraries or the stdlib.
    `("text", …)` chunk into the DeepSeek terminal (`_type_speech`: one line + a space, never
    Enter), and updates the status line and level meter.
 4a. **DeepSeek terminal (branch `feat/deepseek-terminal`)**: `_start_terminal` starts
-   `powershell -Command "deepseek '--settings' '<hook file>'"` in `AI-workspace` at start-up; `terminal.Terminal`'s reader
+   `powershell -Command "deepseek '--settings' '<hook file>'"` in `AI_workspace` at start-up; `terminal.Terminal`'s reader
    thread feeds the screen; `_draw_terminal` (every 16 ms) draws `snapshot()` in
    `TerminalView`; keys from the view go through `terminal.key_bytes`. The end
    (`on_exit`, from a waiting thread) goes through `results` as `("terminal_ended", run)`;

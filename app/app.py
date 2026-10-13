@@ -16,6 +16,7 @@ thread (whisper contexts are not thread safe, so only that thread touches it).
 import json
 import os
 import queue
+import subprocess
 import sys
 import tempfile
 import threading
@@ -88,8 +89,8 @@ CABLE_SETUP = (
     "it twice.")
 
 # DeepSeek terminal (spec 2026-10-12-deepseek-terminal): the user's `deepseek` profile function,
-# run as it is (D3) in a gitignored folder of the project (D4).
-WORKSPACE = Path(__file__).resolve().parent.parent / "AI-workspace"
+# run as it is (D3) in a gitignored folder of the project (D4), walled off from Wisper's own files (D12).
+WORKSPACE = Path(__file__).resolve().parent.parent / "AI_workspace"
 HOOK_SCRIPT = Path(__file__).resolve().parent / "answers.py"
 DEEPSEEK_ENDED = "DeepSeek ended. Press Enter to start it again."
 DEEPSEEK_MISSING = "`deepseek` wasn't found: it's a function in your PowerShell profile."
@@ -107,6 +108,29 @@ def deepseek_argv(settings=None):
     if settings is not None:
         command += " '--settings' '" + str(settings).replace("'", "''") + "'"
     return ["powershell.exe", "-NoLogo", "-Command", command]
+
+
+def prepare_workspace(path):
+    """Create the workspace as its own git repo (D12): Claude Code takes the git root as the project,
+    so `deepseek` doesn't load Wisper's skills, agents, `.mcp.json` or git status. No git: it runs anyway."""
+    path.mkdir(exist_ok=True)
+    if not (path / ".git").exists():
+        try:
+            subprocess.run(["git", "init", "-q"], cwd=path, capture_output=True, timeout=10,
+                           creationflags=subprocess.CREATE_NO_WINDOW)
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+
+def claude_md_excludes(workspace):
+    """`claudeMdExcludes` for every folder above the workspace (D12): Claude Code reads CLAUDE.md from
+    each parent folder up to the drive, so without these it would read Wisper's. Its own still load."""
+    patterns = []
+    for folder in workspace.parents:
+        base = folder.as_posix().rstrip("/")
+        patterns += [f"{base}/CLAUDE.md", f"{base}/CLAUDE.local.md", f"{base}/.claude/CLAUDE.md",
+                     f"{base}/.claude/rules/**"]
+    return patterns
 
 
 def hook_python():
@@ -666,7 +690,7 @@ class App:
         run = self._terminal_run
         lines, columns = self.term_view.size
         try:
-            WORKSPACE.mkdir(exist_ok=True)
+            prepare_workspace(WORKSPACE)
             self.terminal = terminal.Terminal(
                 deepseek_argv(self.hook_settings), str(WORKSPACE), lines=lines, columns=columns,
                 on_exit=lambda: self.results.put(("terminal_ended", run)))
@@ -679,7 +703,8 @@ class App:
 
         Returns its path, or None if it can't be written: `deepseek` then runs without narration."""
         path = Path(tempfile.gettempdir()) / f"wisper-deepseek-hook-{os.getpid()}.json"
-        settings = answers.hook_settings(hook_python(), HOOK_SCRIPT, self.inbox.port, self.inbox.token)
+        settings = {**answers.hook_settings(hook_python(), HOOK_SCRIPT, self.inbox.port, self.inbox.token),
+                    "claudeMdExcludes": claude_md_excludes(WORKSPACE)}
         try:
             path.write_text(json.dumps(settings, indent=2), encoding="utf-8")
         except OSError:

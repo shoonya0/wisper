@@ -23,7 +23,7 @@ never run at the same time.
 | D1 | **Remove Copy all, Clear and Save…** from the speech-to-text pane: the buttons and their code (`copy_all`, `clear`, `save`). The narration pane keeps its own Copy all / Clear / Save… |
 | D2 | **Remove the transcript box.** A terminal takes its place |
 | D3 | The terminal runs **`deepseek` directly** (Wisper starts it at app start), not a general PowerShell. Every answer is then narrated, and Wisper always knows whether it's running. Other PowerShell commands can't be run there. `deepseek` itself (the profile function, `~\.claude-deepseek`, the Claude Code install) **is not changed**: Wisper only adds command-line options |
-| D4 | **No folder limit**: `deepseek` runs with the user's normal settings (shell, permission mode), as in PowerShell. It starts in **`D:\projects\wisper\AI-workspace\`** (user, 2026-10-12; gitignored, created if missing), not the home folder, which Claude Code asked to trust as a whole. A folder inside the Wisper repo also loads Wisper's project setup (`CLAUDE.md`, skills, MCP server, git status); P0 measures what that costs |
+| D4 | **No folder limit**: `deepseek` runs with the user's normal settings (shell, permission mode), as in PowerShell. It starts in **`D:\projects\wisper\AI_workspace\`** (user, 2026-10-12; gitignored, created if missing), not the home folder, which Claude Code asked to trust as a whole. A folder inside the Wisper repo also loads Wisper's project setup (`CLAUDE.md`, skills, MCP server, git status); P0 measures what that costs |
 | D5 | **Every final answer goes to the narration**: Wisper stops any narration in progress, **replaces** the narration box text with the answer and **starts Speak automatically** from the beginning. Only the final reply is narrated: no tool output, thinking or progress |
 | D6 | The answer reaches Wisper through a **Claude Code `Stop` hook** passed with `--settings`, not an MCP server. The hook runs on every turn and passes the exact reply. An MCP "narrate" tool would let DeepSeek decide whether and what to narrate (it may skip, shorten or reword it) and would cost tokens on every call |
 | D7 | **All three modes type into the terminal's input line.** Wisper never presses Enter: the user reviews, edits and sends |
@@ -31,6 +31,7 @@ never run at the same time.
 | D9 | **Listening and narrating take turns (Q2)**: only one runs at a time. Starting speech to text (▶ Start, or Transcribe in File mode) while the narration plays **pauses the narration**. It stays paused until the user resumes it, clears it, or a new answer arrives (which replaces the text and starts from the beginning). Starting or resuming the narration (Speak, Resume, Ctrl+Enter, or a new answer) **pauses speech to text**. Details in §3.2 |
 | D10 | **It dies with Wisper**, however Wisper ends (✕, Ctrl+C in a console, a crash, `taskkill /F`): Wisper puts itself into a Windows Job Object with kill-on-close at start-up, so the pseudo-console, PowerShell, `claude.exe` and anything they start are killed with it. VERIFIED in the reverted 2026-10-11 spike (normal exit, crash, `taskkill /F`, and a hung child) |
 | D11 | The CLI is drawn by Wisper itself (a pseudo-console plus a terminal-screen emulator), so there's no separate window. New dependencies: **`pywinpty`** (Windows ConPTY; 3.0.5, 2026-06, used by Jupyter's terminal) and **`pyte`** (VT100 screen emulator; 0.8.2, last release 2023-11, so P0 checks it copes with Claude Code's screen) |
+| D12 | **`deepseek` sees only `AI_workspace`'s own project files** (user, 2026-10-12: reading Wisper's docs changed its answers and slowed it). The folder is renamed `AI_workspace` and Wisper makes it **its own git repo** (`git init` when `.git` is missing), so Claude Code takes it as the project root: Wisper's skills, agents, `.mcp.json` and git status no longer load. The `--settings` file adds **`claudeMdExcludes`** for `CLAUDE.md`, `CLAUDE.local.md`, `.claude/CLAUDE.md` and `.claude/rules/**` in every folder above the workspace (Claude Code reads CLAUDE.md up to the drive whatever the git root). Markdown files in `AI_workspace` itself (its `CLAUDE.md`, rules) still load. VERIFIED with `deepseek -p` in the workspace: Wisper's CLAUDE.md, skills and agents absent, git branch is the workspace's own; first turn 19.8k input tokens (was ~24.4k; 21.0k with the git repo but no excludes, CLAUDE.md still loaded). Not a sandbox: `deepseek` can still open Wisper's files if asked to (D4) |
 
 ## 3. User experience
 
@@ -51,7 +52,7 @@ never run at the same time.
 
 | Action | Result |
 |---|---|
-| App starts | The terminal shows `deepseek` starting, in `AI-workspace`. The STT controls work as before |
+| App starts | The terminal shows `deepseek` starting, in `AI_workspace`. The STT controls work as before |
 | Speech (Dictation, Live captions) | Each transcribed chunk is typed at the end of the input line, with a space between chunks. Nothing is sent |
 | File mode | Types the file's words until 100 are typed, then the transcription stops; the status says "File: typed the first 100 words." A shorter file is typed whole |
 | Click in the terminal, type | Keys go to `deepseek` (letters, Enter, Backspace, arrows, Tab, Esc, Ctrl+C); Ctrl+Shift+A is `deepseek`'s Ctrl+A |
@@ -88,7 +89,7 @@ whether Wisper is listening or narrating.
 ## 4. Design
 
 1. **Pseudo-console.** `pywinpty` starts
-   `powershell.exe -NoLogo -Command "deepseek '--settings' '<hook settings>'"` in `AI-workspace`
+   `powershell.exe -NoLogo -Command "deepseek '--settings' '<hook settings>'"` in `AI_workspace`
    (the profile is loaded, so the `deepseek` function exists; every argument is single-quoted
    for PowerShell, a lesson from the 2026-10-11 spike). A reader thread reads its output and
    feeds a `pyte` screen. The UI redraws the changed lines into a Tk `Text` widget (colours
@@ -247,7 +248,7 @@ Done when: tests pass, and manually: a DeepSeek answer is spoken.
 
 **Done 2026-10-12**: tests pass and the user's manual check passed (answer spoken without marks, a new answer replaces one being spoken, `/clear` narrates nothing). `app/answers.py` (a new leaf): `Inbox`,
 `extract_answer`, `plain_text`, `hook_settings`, and the hook as `main`. The settings file is
-`%TEMP%\wisper-deepseek-hook-<pid>.json`, outside `AI-workspace`, so `deepseek` doesn't see the
+`%TEMP%\wisper-deepseek-hook-<pid>.json`, outside `AI_workspace`, so `deepseek` doesn't see the
 token in its folder; it's deleted on close. The hook runs under `python.exe` (beside `pythonw.exe`
 when Wisper runs without a console). `plain_text` also ends headings and list items with a full
 stop, so Kokoro pauses between them. An answer arriving while Kokoro is missing or loading waits in
@@ -290,7 +291,7 @@ T-TERM-4 failed first and led to issues #15 and #16 (the prompt edits like a tex
 Scripts in the session scratchpad (`p0/run.py`: `deepseek` in a ConPTY with a `pyte` screen and
 scripted keys; `p0/tkview.py`: a minimal Tk terminal; `p0/jobtest.py`), not committed. A
 throwaway venv held `pywinpty` 3.0.5 and `pyte` 0.8.2; `app/.venv` is unchanged. Claude Code
-2.1.296, DeepSeek Flash, `AI-workspace` (100 × 32).
+2.1.296, DeepSeek Flash, `AI_workspace` (100 × 32).
 
 ### 7.1 Results by step
 
@@ -309,7 +310,7 @@ throwaway venv held `pywinpty` 3.0.5 and `pyte` 0.8.2; `app/.venv` is unchanged.
 ("Teal."). **Tokens**: the first turn costs about 24.4k input tokens (Claude Code's own prompt
 and tools plus Wisper's project context); later turns read ~24.3k from cache and add ~155.
 
-### 7.2 One-time prompts in `AI-workspace`
+### 7.2 One-time prompts in `AI_workspace`
 
 `deepseek` asked once to **trust the folder** (accepted in P0: the user chose this folder), and
 once about the **project MCP server `code-review-graph`** from Wisper's `.mcp.json` ("Continue
@@ -341,7 +342,7 @@ Changes for P1/P2:
 ### 7.4 P1 measurements (`terminal.py`, 2026-10-12)
 
 The user confirmed that `deepseek` in plain PowerShell doesn't lag. P1 timed the whole path
-with `deepseek` running in `AI-workspace` and an invisible Tk window drawing `snapshot()` on a
+with `deepseek` running in `AI_workspace` and an invisible Tk window drawing `snapshot()` on a
 16 ms timer. Keys were written as the view will write them, with no Enter, so no tokens were
 spent. Scripts `p1/lag.py` and `p1/burst.py` are in the session scratchpad.
 

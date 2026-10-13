@@ -38,4 +38,4 @@ CLAUDE.local.md
 .ruff_cache/
 
 # DeepSeek terminal workspace: deepseek runs here (spec 2026-10-12-deepseek-terminal, D4)
-/AI-workspace/
+/AI_workspace/

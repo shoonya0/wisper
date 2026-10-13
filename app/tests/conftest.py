@@ -179,6 +179,7 @@ def make_window(monkeypatch):
         monkeypatch.setattr(app.playback, "PaStream", FakeOutput)
         monkeypatch.setattr(app.playback, "PaInput", FakeInput)
         monkeypatch.setattr(app.terminal, "Terminal", FakeTerminal)          # never a real `deepseek`
+        monkeypatch.setattr(app, "prepare_workspace", lambda path: None)     # no folder, no `git init`
         FakeTerminal.instances = []
         FakeOutput.instances = []
         FakeInput.instances, FakeInput.failing = [], None
