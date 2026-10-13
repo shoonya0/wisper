@@ -60,3 +60,35 @@ def test_long_speech_is_cut_at_max_chunk():
 
 def test_too_little_speech_is_dropped():
     assert run_segmenter(capture.DICTATION, np.concatenate([tone(0.2), silence(1.5)])) == []
+
+
+def chunks_while_running(profile, signal, wait_s=1.0):
+    """Feed signal, then no more blocks (loopback in silence); the chunks out before capture stops."""
+    chunks = []
+    cap = capture.Capture(
+        pa=None,
+        device={"defaultSampleRate": SR, "maxInputChannels": 1, "index": 0},
+        profile=profile,
+        on_chunk=chunks.append,
+    )
+    for i in range(0, len(signal), BLOCK):
+        cap.blocks.put((signal[i : i + BLOCK] * 32767).astype(np.int16).tobytes())
+    cap.running = True
+    thread = threading.Thread(target=cap._segment_loop)
+    thread.start()
+    deadline = time.time() + wait_s
+    while not chunks and time.time() < deadline:
+        time.sleep(0.01)
+    seen = list(chunks)
+    cap.running = False
+    thread.join(timeout=2)
+    return seen
+
+
+def test_captions_short_phrase_comes_out_when_loopback_goes_quiet():     # issue #12
+    (chunk,) = chunks_while_running(capture.CAPTIONS, tone(1.2))
+    assert round(len(chunk) / SR, 1) == 1.2
+
+
+def test_captions_click_still_waits_when_loopback_goes_quiet():          # #12: min_speech_s still drops clicks
+    assert chunks_while_running(capture.CAPTIONS, tone(0.2), wait_s=0.6) == []

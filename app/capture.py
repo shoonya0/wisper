@@ -159,9 +159,10 @@ class Capture:
             try:
                 raw = self.blocks.get(timeout=0.2)
             except queue.Empty:
-                # Loopback delivers nothing while no app plays sound: treat as a pause.
+                # Loopback delivers nothing while no app plays sound: the phrase is over. Send it even
+                # under min_chunk_s, or a short phrase waits for the next sound (#12); clicks still wait.
                 self.level = 0.0
-                if chunk_len >= min_n:
+                if chunk_len >= min_n or speech_len >= speech_min_n:
                     flush()
                 continue
             block = np.frombuffer(raw, np.int16).astype(np.float32) / 32768.0
