@@ -1,11 +1,12 @@
 # Wisper: current state (snapshot 2026-10-13)
 
-Snapshot taken at `46664f5` on `master` (narration N0–N10 merged: PRs #1, #3, #4, #5, #6, #8, #9, #10, #13; File-mode
-fix PR #2; start-up defaults and run docs PR #11). Open issues: #12 (fixed on `feat/deepseek-terminal`, 2026-10-13; closes when its PR merges). Closed by hand (user, 2026-10-12): #14, #15, #16, fixed on the branch below and verified.
-Then the DeepSeek terminal, **merged 2026-10-12 (PR #17)**: the spec, its P0 spike, P1
+Snapshot taken at `1a7587c` on `master` (narration N0–N10 merged: PRs #1, #3, #4, #5, #6, #8, #9, #10, #13; File-mode
+fix PR #2; start-up defaults and run docs PR #11). **No open issues** (#12 closed by PR #18; #14, #15, #16 closed by
+the user, 2026-10-12).
+The DeepSeek terminal, **merged 2026-10-12 (PR #17)**: the spec, its P0 spike, P1
 (`app/terminal.py`), P2 (the terminal replaces the transcript box), the #14 fix (Ctrl+A), P3 (File mode stops at
 100 words), P4 (answers narrated), P5 (taking turns, Job Object), P6 (manual test plan) and the prompt editing like a
-text box (#15, #16). On 2026-10-13, on `feat/deepseek-terminal` again (PR open): `deepseek` walled off from Wisper's files in `AI_workspace` (D12, the folder
+text box (#15, #16). **Merged 2026-10-13 (PR #18)**: `deepseek` walled off from Wisper's files in `AI_workspace` (D12, the folder
 renamed from `AI-workspace`), the root README rewritten as a from-scratch setup and team-workflow guide, and
 the #12 fix (Live captions sends short phrases).
 One page; update it when an increment lands.
@@ -19,7 +20,7 @@ Claims are marked **VERIFIED** (run or read in code) or **ASSUMED**.
 | Engine build | ✅ present (VERIFIED) | `whisper.cpp/build/bin/Release/whisper.dll` + `ggml-vulkan.dll`, `GGML_VULKAN=1` in CMakeCache |
 | Models | ✅ present (VERIFIED) | base.en-q5_1, small.en-q5_1, large-v3-turbo-q5_0 in `whisper.cpp/models/` |
 | Narration (TTS) | 🚧 N0–N6 done and merged: Speak/Stop with voice and speed (T-TTS-1…5 passed). N6 (Only me / Only others / Both, default Both, PR #8): Google Meet heard the narration through VB-Cable (T-MODE-2, 2026-10-10). N8 (mic pass-through: the call hears the user's voice and the narration together, PR #9): user checked it in a call and reported it working (2026-10-10). N7 (Ctrl+Enter, "Speaking 3/12…", Live captions feedback hint, PR #10): T-KEY-1 and the progress check passed (user, 2026-10-10); T-ERR-2 deferred. N9 (pause and resume, PR #13): T-PAUSE-1 passed (user, 2026-10-11); **pending: T-PAUSE-2** (in a call). N10 (mark the narrated text, PR #13): T-MARK-1 passed (user, 2026-10-11) | Kokoro-82M fp32 on the CPU: RTF 0.36–0.40 with 4 threads ([performance.md](./performance.md)); model in `models/kokoro/` |
-| Tests | ✅ 362 fast + 2 slow tests on `feat/deepseek-terminal` (220 on `master`; see Test baseline) (characterization, architecture, capture devices, window layout + narration box, file stitching, TTS splitting/spans/voices/engine, playback, narrator, narration UI + output modes + mic pass-through + pause + narrated marks) | baseline below |
+| Tests | ✅ 362 fast + 2 slow tests on `master` (see Test baseline) (characterization, architecture, capture devices, window layout + narration box, file stitching, TTS splitting/spans/voices/engine, playback, narrator, narration UI + output modes + mic pass-through + pause + narrated marks) | baseline below |
 | DeepSeek terminal | 🚧 in progress: spec agreed, **P0–P6 done** 2026-10-12 (manual plan passed except the File rows, on hold): the transcript box and Copy all / Clear / Save… are gone; `deepseek` runs in their place (`terminal_view.py`) from start-up, speech is typed into its input line (never Enter), "DeepSeek ended…" / "not found" lines, Enter restarts it. The user's manual check passed (no typing lag, speech, scroll-back, copy/paste, resize, restart, close); select-all in the prompt (issue #14) fixed after it: Ctrl+A selects the prompt's text, Ctrl+Shift+A is `deepseek`'s Ctrl+A. P3: File mode types at most 100 words, then whisper.cpp's abort callback stops the file (GPU check: base.en, 66 s file, the abort returns cleanly at 3.0 s vs 6.1 s for the whole file, and the next run works) and the status says "File: typed the first 100 words."; the `--- name ---` header is no longer typed. Code review: no blocking findings. **Manual check of P3: on hold with File mode** (a long file types exactly 100 words; a short one is typed whole). P4: each answer `deepseek` finishes comes back through its `Stop` hook (`answers.py`, given with `--settings`, settings file in `%TEMP%`) to a 127.0.0.1 listener with a per-run token; the Markdown becomes plain text, replaces the narration box and is spoken (an empty answer changes nothing; without Kokoro it waits in the box). VERIFIED: the hook command from a real settings file, run through Git Bash with a recorded hook input, delivers the answer in 0.19 s. **P4 VERIFIED by the user** (an answer is spoken without its Markdown marks, a second question while it's speaking replaces it, `/clear` narrates nothing; 2026-10-12). **D12 (2026-10-13)**: `deepseek` loads only `AI_workspace`'s own project files: Wisper makes the folder its own git repo (so Wisper's skills, agents, `.mcp.json` and git status don't load) and passes `claudeMdExcludes` for the CLAUDE.md files above it. VERIFIED with `deepseek -p` there: no Wisper CLAUDE.md or skills, first turn 19.8k input tokens (was ~24.4k); the folder's own CLAUDE.md and skills load. **Manual check pending: T-TERM-9.** **P5 VERIFIED by the user** (2026-10-12; the File-mode row not checked: File mode is on hold): listening and narrating take turns (§3.2; Speak/Resume/an answer stop listening, ▶ Start/Transcribe pause the narration) and Wisper runs in a kill-on-close Job Object (`priority.kill_children_with_me`; VERIFIED by test: a child dies when its parent is `taskkill /F`-ed, survives without the job). N7's Live captions feedback hint is gone (impossible under D9). P1 VERIFIED: `deepseek` ready in 0.8 s (was 3.8 s: ConPTY waited for a device-attributes reply), key → drawn median 16 ms / max 33 ms (target 50), scroll-back 5000 lines, exit seen at once. P0: Interactive `deepseek` in a pseudo-console (`pywinpty`) drawn by `pyte` + Tk works, the `Stop` hook returns the final reply (`last_assistant_message`) and the Job Object kills the tree (all VERIFIED in the spike). The user's look at the spike window: typing lagged and there was no scroll-back; P1 addresses both (the user checks typing in P2) | [spec](./specs/2026-10-12-deepseek-terminal.md) §7 (§7.4 P1); workspace `AI_workspace/` (gitignored); hook fixtures in `app/tests/fixtures/deepseek-hook/` |
 | AI harness | ✅ set up; CI runs on GitHub; guard hook verified live | [`ai-harness-setup.md`](./ai-harness-setup.md) |
 
@@ -27,13 +28,13 @@ Claims are marked **VERIFIED** (run or read in code) or **ASSUMED**.
 
 - **Dictation**: transcribe the microphone as they speak (low latency, `small.en` default).
 - **Live captions** (the start-up mode): transcribe desktop/meeting audio via WASAPI
-  loopback (`small.en` default; the Windows default speakers are pre-selected). On
-  `feat/deepseek-terminal` a short phrase (< 2 s) is sent as soon as the sound stops (#12).
+  loopback (`small.en` default; the Windows default speakers are pre-selected). A short
+  phrase (< 2 s) is sent as soon as the sound stops (#12).
 - **File**: transcribe WAV/MP3/FLAC/OGG with progressive text (`large-v3-turbo` default).
-  On `feat/deepseek-terminal` it types at most 100 words into the prompt, then stops (D8).
-- Choose model (fastest ↔ most accurate) and language. On `master` the transcript box has
-  Copy all / Save… / Clear; on `feat/deepseek-terminal` it's replaced by the DeepSeek terminal.
-- **DeepSeek terminal** (branch `feat/deepseek-terminal`, P2): the real `deepseek` CLI runs in
+  It types at most 100 words into the DeepSeek prompt, then stops (D8).
+- Choose model (fastest ↔ most accurate) and language. The old transcript box (Copy all / Save… /
+  Clear) is replaced by the DeepSeek terminal.
+- **DeepSeek terminal** (PR #17, #18): the real `deepseek` CLI runs in
   the left pane from start-up; speech is typed into its prompt (never sent); type, scroll back,
   copy, paste; the prompt edits like a text box (#15, #16): Ctrl+A selects it (Ctrl+Shift+A is `deepseek`'s Ctrl+A), a click moves the cursor there, and a selection in it is deleted by Backspace/Delete or replaced by typing or a paste; `/exit`
   then Enter restarts it. Each answer DeepSeek finishes replaces the narration text and is spoken (P4; Markdown marks removed).
@@ -74,9 +75,9 @@ Claims are marked **VERIFIED** (run or read in code) or **ASSUMED**.
   `pythonw` command but doesn't start the app (reported 2026-10-11, cause not found yet).
 - **Setup (fresh clone):** `py -3.12 -m venv app\.venv`, then
   `app\.venv\Scripts\python.exe -m pip install -r app\requirements-dev.txt`. The venv
-  is Python 3.12.10 (VERIFIED).
+  is Python 3.12 (VERIFIED).
 - **Engine (gitignored, rebuild if missing).** This needs the Vulkan SDK (for `glslc`)
-  and CMake. The current build used Visual Studio 18 2026 (VERIFIED from CMakeCache):
+  and CMake, and the Visual Studio C++ build tools:
   ```bat
   git clone https://github.com/ggml-org/whisper.cpp && cd whisper.cpp && git checkout 6e4ab85
   cmake -B build -DGGML_VULKAN=1
@@ -102,7 +103,7 @@ Claims are marked **VERIFIED** (run or read in code) or **ASSUMED**.
 - **Fast check:** `node tools/verify.mjs` (ruff check → pyright → pytest, ~6 s). **Full:** `node tools/verify.mjs --full` (adds the `slow` pytest tests: real Kokoro model, ~4 s).
 - **Tests only:** `app\.venv\Scripts\python.exe -m pytest` (config in root `pyproject.toml`).
 
-## Test baseline (after D12 and the #12 fix, branch `feat/deepseek-terminal`)
+## Test baseline (`master` after PR #18: D12 and the #12 fix)
 
 | Suite | Result | Known failures (by name) |
 |---|---|---|
@@ -154,19 +155,19 @@ Compare new runs against this list **by test name**.
    first. Found in N8: the pass-through used it at first and its delay grew from 16 to
    266 ms in 8 s, so N8 uses the WASAPI-only `playback.list_inputs`. Dictation is
    unchanged (not measured whether it matters there).
-10. ~~**Live captions holds short phrases**~~ FIXED on `feat/deepseek-terminal` (2026-10-13,
+10. ~~**Live captions holds short phrases**~~ FIXED (PR #18, 2026-10-13,
     [#12](https://github.com/shoonya0/wisper/issues/12)): a phrase under 2 s waited for the next
     sound, because loopback sends no blocks in silence. When no block comes for 0.2 s, the chunk
     now goes out if it has ≥ `min_speech_s` (0.35 s) of speech; the 2 s minimum still applies
     while audio keeps arriving. VERIFIED on the GPU: Kokoro's 1.17 s "hi how are you" → one chunk
-    0.22 s after the audio stops → small.en "Hi, how are you?". Closes when its PR merges.
+    0.22 s after the audio stops → small.en "Hi, how are you?". Issue closed.
 11. **`app\run.bat` doesn't start the app** (reported 2026-10-11, cause not found): it runs
     the same `pythonw` command as the documented one; LF line endings were ruled out. Run
     from `app\` with `.venv\Scripts\pythonw.exe app.py` instead.
-12. **DeepSeek terminal: no select-all in the prompt** ([#14](https://github.com/shoonya0/wisper/issues/14),
-    2026-10-12): Ctrl+A went to `deepseek`. Fixed on `feat/deepseek-terminal` (`a3e4452`):
-    Ctrl+A selects the prompt's text, Ctrl+Shift+A is `deepseek`'s Ctrl+A. Typing doesn't
-    replace the selection (keys go to `deepseek`). Closes when the branch is merged.
+12. ~~**DeepSeek terminal: no select-all in the prompt**~~ FIXED (PR #17) ([#14](https://github.com/shoonya0/wisper/issues/14),
+    2026-10-12): Ctrl+A went to `deepseek`. Fixed in `a3e4452`:
+    Ctrl+A selects the prompt's text, Ctrl+Shift+A is `deepseek`'s Ctrl+A; since #15/#16 typing,
+    a paste or Backspace replaces or deletes the selection. Issue closed.
 13. ~~**DeepSeek terminal: File mode types its `--- name ---` header**~~ FIXED in P3
     (2026-10-12, branch only): the name shows in the status line ("Decoding name…") only.
 
@@ -180,7 +181,8 @@ Compare new runs against this list **by test name**.
 
 ## Next task
 
-- **Next: merge the D12 + #12 + README PR** (`feat/deepseek-terminal` → `master`; it closes #12). The DeepSeek terminal itself merged on 2026-10-12 (PR #17, fixes for #14, #15, #16).
+- **Next: narration latency** (the "Latency" row below: measure the whole chain in a real call
+  first with `optimized-app-research`). The DeepSeek terminal is merged (PR #17, #18).
   **Pending manual checks** (user): T-TERM-9 (D12: `deepseek` knows nothing about Wisper) and #12 (Live captions:
   a 1–2 s phrase from another app is typed within about a second; Wisper's own Speak can't test it, P5).
   P0–P6 are done (2026-10-12): the user ran the manual plan

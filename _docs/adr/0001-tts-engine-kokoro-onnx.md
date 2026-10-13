@@ -47,7 +47,7 @@ move TTS to the GPU later.
 
 | Check | Result |
 |---|---|
-| RTF ≤ 0.5 on this CPU (i5-10400F) | ✅ fp32 with 4 threads on an idle CPU: **RTF 0.36–0.40** total over 61 s of audio (two runs) |
+| RTF ≤ 0.5 on the test CPU | ✅ fp32 with 4 threads on an idle CPU: **RTF 0.36–0.40** total over 61 s of audio (two runs) |
 | First sound ≤ 1.0 s | ✅ with the first chunk capped at 6 words: a 5-word chunk is ready in **0.73–0.84 s** p50 (max 0.91 s). ❌ a 16-word first sentence takes 1.80 s → spec §5.2 adds the 6-word first-chunk cap. ⚠ under CPU contention the 5-word chunk rose to 1.33 s; N5 must measure it with Whisper running |
 | int8 model | ❌ **~10× slower** than fp32 on this CPU (RTF 3.25–4.54). Rejected; the default is fp32 (`kokoro-v1.0.onnx`, 325 MB) |
 | Offline | ✅ every benchmark run with `--offline` had all Python socket calls blocked; espeak-ng loads from the venv |
