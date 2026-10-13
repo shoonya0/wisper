@@ -33,7 +33,7 @@ def test_deepseek_starts_with_the_window_in_the_workspace(window):
     assert len(FakeTerminal.instances) == 1
     t = term(window)
     assert t.argv == ["powershell.exe", "-NoLogo", "-Command", f"deepseek '--settings' '{window.hook_settings}'"]
-    assert t.cwd == str(app.WORKSPACE) and app.WORKSPACE.name == "AI-workspace"
+    assert t.cwd == str(app.WORKSPACE) and app.WORKSPACE.name == "AI_workspace"
 
 
 def test_deepseek_gets_the_stop_hook_outside_its_workspace(window):    # §4.4, P4
@@ -43,6 +43,29 @@ def test_deepseek_gets_the_stop_hook_outside_its_workspace(window):    # §4.4, 
     assert hook["type"] == "command"
     assert hook["command"].endswith(f'/answers.py" {window.inbox.port} {window.inbox.token}')
     assert app.WORKSPACE not in window.hook_settings.parents           # `deepseek` can't read the token there
+
+
+def test_deepseek_skips_the_claude_md_files_above_its_workspace(window):    # D12
+    excludes = json.loads(window.hook_settings.read_text(encoding="utf-8"))["claudeMdExcludes"]
+    repo = app.WORKSPACE.parent.as_posix()
+    assert f"{repo}/CLAUDE.md" in excludes and f"{repo}/.claude/rules/**" in excludes
+    assert not any(p.startswith(app.WORKSPACE.as_posix() + "/") for p in excludes)   # its own still load
+
+
+def test_claude_md_excludes_reach_the_drive():
+    excludes = app.claude_md_excludes(Path(r"D:\projects\wisper\AI_workspace"))
+    assert excludes[:4] == ["D:/projects/wisper/CLAUDE.md", "D:/projects/wisper/CLAUDE.local.md",
+                            "D:/projects/wisper/.claude/CLAUDE.md", "D:/projects/wisper/.claude/rules/**"]
+    assert excludes[-4:] == ["D:/CLAUDE.md", "D:/CLAUDE.local.md", "D:/.claude/CLAUDE.md", "D:/.claude/rules/**"]
+
+
+def test_the_workspace_is_its_own_git_repo(tmp_path):                  # D12
+    ws = tmp_path / "AI_workspace"
+    app.prepare_workspace(ws)
+    top = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=ws, capture_output=True, text=True)
+    assert Path(top.stdout.strip()) == ws
+    app.prepare_workspace(ws)                                          # again: left as it is
+    assert (ws / ".git").is_dir()
 
 
 def test_deepseek_argv_quotes_for_powershell():
