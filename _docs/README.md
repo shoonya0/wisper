@@ -17,6 +17,7 @@ are no per-area `_docs/` folders. `whisper.cpp/` is upstream code and isn't docu
 | Feature | Spec | Test plan | Decisions |
 |---|---|---|---|
 | Narration (Kokoro-82M TTS) | [specs/2026-10-07-kokoro-narration.md](./specs/2026-10-07-kokoro-narration.md); N8 mic pass-through: [specs/2026-10-10-mic-passthrough.md](./specs/2026-10-10-mic-passthrough.md); N9 pause and resume: [specs/2026-10-11-narration-pause.md](./specs/2026-10-11-narration-pause.md); N10 narrated marks: [specs/2026-10-11-narration-highlight.md](./specs/2026-10-11-narration-highlight.md) | [test/kokoro-narration.md](./test/kokoro-narration.md) | [adr/0001-tts-engine-kokoro-onnx.md](./adr/0001-tts-engine-kokoro-onnx.md) |
+| Ear channels (hear each app in the left ear, the right ear or both; **highest priority**) | [specs/2026-10-15-ear-channels.md](./specs/2026-10-15-ear-channels.md) (steps C0–C7 in §7) | `test/ear-channels.md` (step C6) | in the spec, §6 |
 | DeepSeek terminal (speech → `deepseek` CLI in the STT pane → narration) | [specs/2026-10-12-deepseek-terminal.md](./specs/2026-10-12-deepseek-terminal.md) | [test/deepseek-terminal.md](./test/deepseek-terminal.md) | in the spec, §2 |
 
 ## Where new docs go

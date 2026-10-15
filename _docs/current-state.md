@@ -181,7 +181,13 @@ Compare new runs against this list **by test name**.
 
 ## Next task
 
-- **Next: narration latency** (the "Latency" row below: measure the whole chain in a real call
+- **Next: ear channels** (user, 2026-10-15: highest priority): a strip at the bottom of the
+  window with a Left ear and a Right ear dropdown of the apps playing on the wired earphones,
+  so e.g. Discord plays in the left ear and Zoom/Meet/YouTube in the right. Windows'
+  per-app channel volumes do it with no audio through Wisper (VERIFIED by a spike, 2026-10-15).
+  Spec, decisions D1–D8 (waiting for the user's yes) and steps C0–C7:
+  [`specs/2026-10-15-ear-channels.md`](./specs/2026-10-15-ear-channels.md). Start with C0.
+- **After that: narration latency** (the "Latency" row below: measure the whole chain in a real call
   first with `optimized-app-research`). The DeepSeek terminal is merged (PR #17, #18).
   **Pending manual checks** (user): T-TERM-9 (D12: `deepseek` knows nothing about Wisper) and #12 (Live captions:
   a 1–2 s phrase from another app is typed within about a second; Wisper's own Speak can't test it, P5).
