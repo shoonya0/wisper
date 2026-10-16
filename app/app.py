@@ -31,6 +31,7 @@ import numpy as np
 import answers
 import audio_io
 import capture
+import channels
 import narrator
 import playback
 import priority
@@ -99,6 +100,16 @@ TERMINAL_MS = 16                                         # redraw timer: a key s
 FILE_WORDS = 100                                         # File mode types this many words, then stops (D8)
 FILE_LIMIT = f"File: typed the first {FILE_WORDS} words."
 FILE_DONE = {"limit": FILE_LIMIT, "stopped": STT_PAUSED, None: "File transcription complete."}
+
+# Ear channels (spec 2026-10-15-ear-channels §3.1, §5.5): each app in the left ear, the right ear or both.
+EAR_STOPPED = "Ear channels stopped"                    # status line, no dialog (rule 3.2.9)
+EAR_OFF = "Ear channels are off"                        # the router couldn't be made (journal unreadable)
+EAR_SEND_MS = 50                                        # a dragged scale sends at most ~20 changes/s (§3.1)
+
+
+def make_ear_router(on_update, on_error):
+    """The real router (§5.5); tests replace it with a fake. Raises OSError when the journal can't be read."""
+    return channels.Router(channels.WasapiAudio(), channels.Journal(channels.journal_path()), on_update, on_error)
 
 
 
@@ -223,14 +234,15 @@ class App:
             lambda name, e, run: self.tts_results.put(("pass_error", run, f"{PASS_ERROR}: {name}: {e}")))
 
         root.title("Wisper — local speech-to-text (RX 580 · Vulkan)")
-        root.geometry("1440x680")
-        root.minsize(STT_MIN_W + TTS_MIN_W + SASH_W, 420)
+        root.geometry("1440x780")
+        root.minsize(STT_MIN_W + TTS_MIN_W + SASH_W, 520)   # +100 px for the ear channels strip
 
         # P4 (spec §4.4): `deepseek`'s Stop hook sends each final answer here; _poll narrates it.
         self.inbox = answers.Inbox(lambda text: self.results.put(("ai_answer", text)))
         self.hook_settings = self._write_hook_settings()
 
         self._apply_theme(root)
+        self._build_ears(root)            # before the panes, so it keeps its rows at the bottom
         stt_pane, tts_pane = self._build_panes(root)
         self._build_controls(stt_pane)
         self._build_status(stt_pane)      # before the terminal so it keeps its row
@@ -243,6 +255,8 @@ class App:
         self.tts_worker = threading.Thread(target=self._tts_worker_loop, daemon=True)
         self.tts_worker.start()
         self.tts_jobs.put(("load",))   # in the background: the window opens at once, STT doesn't wait
+        if self.ear_router is not None:
+            self.ear_router.start()
         self._on_mode_change()
         self._request_model()       # load the initial model
         self._start_terminal()
@@ -567,6 +581,175 @@ class App:
         self.level_bar = ttk.Progressbar(status, length=120, maximum=0.15)
         self.level_bar.pack(side="right")
         ttk.Label(status, text="Level ").pack(side="right")
+
+    # ------------------------------------------------------------ ear channels
+
+    def _build_ears(self, root):
+        """The ear channels strip across both panes (spec 2026-10-15-ear-channels §3.1). The router runs on its own
+        thread; its updates come back through `ear_results`, drained by _poll (§5.2: no Tk call off this thread)."""
+        self.ear_results = queue.Queue()  # ("ear_update", device, apps, warnings) | ("ear_error", msg)
+        self.ear_sel = {channels.LEFT: channels.Selection(), channels.RIGHT: channels.Selection()}
+        self.ear_apps = []                # channels.App rows from the last update
+        self.ear_app_vols = {}            # app key -> 0..100, as the user set it (D9)
+        self.ear_app_key = None           # the app the App scale is for
+        self._ear_pending = {}            # ("volume", side) | ("app", key) -> 0..100, sent at the next tick
+        self._ear_send_id = None
+        self._ear_menu_vars = {}
+
+        strip = ttk.Frame(root, padding=(8, 2, 8, 6))
+        strip.pack(side="bottom", fill="x")
+        tk.Frame(root, height=1, bg=DARK["border"]).pack(side="bottom", fill="x")
+        self.ear_strip = strip
+
+        head = ttk.Frame(strip)
+        head.pack(fill="x")
+        ttk.Label(head, text="Ear channels", style="Header.TLabel").pack(side="left")
+        self.ear_device_var = tk.StringVar(value="Earphones: …")
+        ttk.Label(head, textvariable=self.ear_device_var).pack(side="left", padx=(12, 0))
+        self.ear_reset_btn = ttk.Button(head, text="Reset", command=self.ear_reset)
+        self.ear_reset_btn.pack(side="right")
+        self.ear_status_var = tk.StringVar()
+        ttk.Label(head, textvariable=self.ear_status_var).pack(side="right", padx=8)
+
+        self.ear_buttons, self.ear_menus, self.ear_scales, self.ear_vol_vars = {}, {}, {}, {}
+        for side, label in ((channels.LEFT, "Left ear:"), (channels.RIGHT, "Right ear:")):
+            row = ttk.Frame(strip)
+            row.pack(fill="x", pady=(2, 0))
+            ttk.Label(row, text=label, width=10).pack(side="left")
+            menu = tk.Menu(row, tearoff=0, bg=DARK["surface"], fg=DARK["fg"], activebackground=DARK["sel"],
+                           activeforeground=DARK["fg"], selectcolor=DARK["fg"])
+            button = ttk.Menubutton(row, text=channels.ALL_LABEL, menu=menu, width=44)
+            button.pack(side="left")
+            self.ear_buttons[side], self.ear_menus[side] = button, menu
+            self.ear_scales[side], self.ear_vol_vars[side] = self._ear_scale_row(row, ("volume", side))
+
+        row = ttk.Frame(strip)
+        row.pack(fill="x", pady=(2, 0))
+        ttk.Label(row, text="App:", width=10).pack(side="left")
+        self.ear_app_box = ttk.Combobox(row, state="readonly", width=44)
+        self.ear_app_box.pack(side="left")
+        self.ear_app_box.bind("<<ComboboxSelected>>", lambda e: self._ear_pick_app())
+        self.ear_app_scale, self.ear_app_vol_var = self._ear_scale_row(row, ("app", None))
+
+        try:
+            self.ear_router = make_ear_router(lambda *update: self.ear_results.put(("ear_update", *update)),
+                                              lambda msg: self.ear_results.put(("ear_error", msg)))
+        except (OSError, ValueError) as e:
+            self.ear_router = None        # e.g. the restore journal can't be read: never write over it
+            self.ear_status_var.set(f"{EAR_OFF}: {e}")
+            self._ear_enable(False, keep_reset=False)
+        self._ear_rebuild()
+
+    def _ear_enable(self, on, keep_reset=True):
+        """Menus and scales on or off (§5.3: off while the earphones aren't stereo); Reset stays usable then."""
+        for w in (*self.ear_buttons.values(), *self.ear_scales.values(), self.ear_app_box, self.ear_app_scale,
+                  *([] if keep_reset else [self.ear_reset_btn])):
+            w.state(["!disabled"] if on else ["disabled"])
+
+    def _ear_scale_row(self, row, what):
+        ttk.Label(row, text="  Volume").pack(side="left")
+        var = tk.StringVar(value="100 %")
+        scale = ttk.Scale(row, from_=0, to=100, value=100, length=180,
+                          command=lambda value: self._ear_scale(what, value))
+        scale.pack(side="left", padx=6)
+        ttk.Label(row, textvariable=var, width=6).pack(side="left")
+        return scale, var
+
+    def _ear_scale(self, what, value):
+        """A scale moved: show it at once, send it at most every EAR_SEND_MS (§3.1)."""
+        v = round(float(value))
+        if what[0] == "app":
+            if self.ear_app_key is None:
+                return
+            what = ("app", self.ear_app_key)
+            self.ear_app_vols[self.ear_app_key] = v
+            self.ear_app_vol_var.set(f"{v} %")
+        else:
+            self.ear_vol_vars[what[1]].set(f"{v} %")
+        self._ear_pending[what] = v
+        if self._ear_send_id is None:
+            self._ear_send_id = self.root.after(EAR_SEND_MS, self._ear_send)
+
+    def _ear_send(self):
+        self._ear_send_id = None
+        pending, self._ear_pending = self._ear_pending, {}
+        if self.ear_router is None:
+            return
+        for (kind, arg), v in pending.items():
+            if kind == "volume":
+                self.ear_router.volume(arg, v / 100)
+            else:
+                self.ear_router.app_volume(arg, v / 100)
+
+    def _ear_pick_app(self):
+        i = self.ear_app_box.current()
+        if i < 0:
+            return
+        self.ear_app_key = self._ear_app_keys[i]
+        v = self.ear_app_vols.get(self.ear_app_key, 100)
+        self.ear_app_scale.set(v)
+        self.ear_app_vol_var.set(f"{v} %")
+
+    def _ear_toggle(self, side, key):
+        """A menu item was clicked: rule 3.2.5 on this ear's choice, then tell the router."""
+        self.ear_sel[side] = self.ear_sel[side].toggle(key)
+        if self.ear_router is not None:
+            self.ear_router.choose(side, self.ear_sel[side])
+        self._ear_rebuild()
+
+    def _ear_label(self, side):
+        sel = self.ear_sel[side]
+        if sel.is_all:
+            return channels.ALL_LABEL
+        names = {a.key: a.name for a in self.ear_apps}
+        return ", ".join(sorted((names.get(k, k) for k in sel.keys), key=str.casefold))
+
+    def _ear_rebuild(self):
+        """Both menus from the last update and the current choices (rules 3.2.6, 3.2.7), and the App list."""
+        for side, menu in self.ear_menus.items():
+            menu.delete(0, "end")
+            self._ear_menu_vars[side] = []    # the menu's check marks live as long as these do
+            for item in channels.menu_items(self.ear_apps, self.ear_sel[side]):
+                if item is None:
+                    menu.add_separator()
+                    continue
+                var = tk.BooleanVar(value=item.checked)
+                self._ear_menu_vars[side].append(var)
+                menu.add_checkbutton(label=item.label, variable=var,
+                                     command=lambda s=side, k=item.key: self._ear_toggle(s, k))
+            self.ear_buttons[side].config(text=self._ear_label(side))
+        apps = sorted(self.ear_apps, key=lambda a: (a.name.casefold(), a.key))
+        self._ear_app_keys = [a.key for a in apps]
+        self.ear_app_box.config(values=[a.name + ("" if a.running else channels.NOT_RUNNING) for a in apps])
+        if self.ear_app_key in self._ear_app_keys:
+            self.ear_app_box.current(self._ear_app_keys.index(self.ear_app_key))
+
+    def ear_reset(self):
+        """Both ears back to All apps at 100 %, every app at 100 %; the router puts every app back (§5.4)."""
+        if self.ear_router is not None:
+            self.ear_router.reset()
+        self.ear_sel = {channels.LEFT: channels.Selection(), channels.RIGHT: channels.Selection()}
+        self.ear_app_vols, self._ear_pending = {}, {}
+        for scale, var in (*zip(self.ear_scales.values(), self.ear_vol_vars.values(), strict=True),
+                           (self.ear_app_scale, self.ear_app_vol_var)):
+            scale.set(100)
+            var.set("100 %")
+        self._ear_pending = {}            # scale.set may have queued a send; Reset already says it all
+        self.ear_status_var.set("")
+        self._ear_rebuild()
+
+    def _poll_ears(self):
+        while not self.ear_results.empty():
+            kind, *payload = self.ear_results.get()
+            if kind == "ear_update":
+                device, apps, warnings = payload
+                self.ear_device_var.set(f"Earphones: {device}")
+                self.ear_apps = list(apps)
+                self.ear_status_var.set(warnings[0] if warnings else "")
+                self._ear_enable(channels.NOT_STEREO not in warnings)
+                self._ear_rebuild()
+            elif kind == "ear_error":     # rule 3.2.9: the status line, never a dialog
+                self.ear_status_var.set(f"{EAR_STOPPED}: {payload[0]}")
 
     # --------------------------------------------------------------- mode swap
 
@@ -1080,6 +1263,7 @@ class App:
             self.status_var.set(f"{state}  •  {self.model_var.get()}  •  queue: {pending}")
 
         self._poll_tts()
+        self._poll_ears()
         self.level_bar["value"] = self.capture.level if self.capture else 0
         self.root.after(100, self._poll)
 
@@ -1088,6 +1272,8 @@ class App:
             self.capture.stop()
         if self.terminal is not None:
             self.terminal.close()         # ends `deepseek` and what it started in the pseudo-console
+        if self.ear_router is not None:
+            self.ear_router.close()       # puts every app back (§5.4); joined, 2 s cap
         self.inbox.close()
         if self.hook_settings is not None:
             self.hook_settings.unlink(missing_ok=True)

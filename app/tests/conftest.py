@@ -1,7 +1,8 @@
-"""Shared fixture: the real Tk window with a fake Whisper, PyAudio, Kokoro engine, output and terminal.
+"""Shared fixture: the real Tk window with a fake Whisper, PyAudio, Kokoro engine, output, terminal and
+ear channels router.
 
-No GPU, model file or audio device is touched. Used by test_window_layout.py and
-test_narration_ui.py.
+No GPU, model file, audio device or restore journal is touched. Used by test_window_layout.py,
+test_narration_ui.py, test_ears_ui.py and the other UI tests.
 """
 
 import gc
@@ -148,6 +149,44 @@ class FakeTerminal:
         self.alive, self.closed = False, True
 
 
+class FakeRouter:
+    """Stands in for channels.Router: records the UI's commands; `update` / `error` act as the router thread.
+
+    The last one made is `FakeRouter.last` (each window makes one).
+    """
+
+    last = None
+
+    def __init__(self, on_update, on_error):
+        self.on_update, self.on_error = on_update, on_error
+        self.calls = []
+        FakeRouter.last = self
+
+    def start(self):
+        self.calls.append(("start",))
+
+    def choose(self, side, selection):
+        self.calls.append(("choose", side, selection))
+
+    def volume(self, side, v):
+        self.calls.append(("volume", side, v))
+
+    def app_volume(self, key, v):
+        self.calls.append(("app_volume", key, v))
+
+    def reset(self):
+        self.calls.append(("reset",))
+
+    def close(self, timeout=2.0):
+        self.calls.append(("close",))
+
+    def update(self, device, apps, warnings=()):
+        self.on_update(device, list(apps), list(warnings))
+
+    def error(self, msg):
+        self.on_error(msg)
+
+
 SPEAKERS = {"index": 0, "name": "Speakers", "label": "Speakers", "defaultSampleRate": 24000,
             "maxOutputChannels": 2}
 MIC = {"index": 2, "name": "Microphone (Realtek)", "label": "Microphone (Realtek)", "defaultSampleRate": 24000,
@@ -158,13 +197,14 @@ CABLE = {"index": 1, "name": "CABLE Input (VB-Audio Virtual Cable)",
 
 @pytest.fixture
 def make_window(monkeypatch):
-    """make_window(engine=None, outputs=(SPEAKERS, CABLE), mics=()): engine None = Kokoro files missing.
+    """make_window(engine=None, outputs=(SPEAKERS, CABLE), mics=(), ear_router=FakeRouter): engine None = Kokoro
+    files missing; ear_router(on_update, on_error) stands in for app.make_ear_router.
 
     No mics by default, so the mic pass-through (N8) stays off unless a test asks for it.
     """
     windows = []
 
-    def make(engine=None, outputs=(SPEAKERS, CABLE), mics=()):
+    def make(engine=None, outputs=(SPEAKERS, CABLE), mics=(), ear_router=FakeRouter):
         def load():
             if engine is None:
                 raise FileNotFoundError(app.tts.MISSING_MESSAGE)
@@ -180,6 +220,7 @@ def make_window(monkeypatch):
         monkeypatch.setattr(app.playback, "PaInput", FakeInput)
         monkeypatch.setattr(app.terminal, "Terminal", FakeTerminal)          # never a real `deepseek`
         monkeypatch.setattr(app, "prepare_workspace", lambda path: None)     # no folder, no `git init`
+        monkeypatch.setattr(app, "make_ear_router", ear_router)              # no COM, no real journal
         FakeTerminal.instances = []
         FakeOutput.instances = []
         FakeInput.instances, FakeInput.failing = [], None
