@@ -229,7 +229,9 @@ The strip works on the **Windows default output** (`eRender`, `eMultimedia`), ch
 every poll. Plugging in wired earphones on most PCs keeps the same endpoint (jack
 detection); on PCs where "Headphones" is a separate endpoint and becomes the default,
 the strip moves to it. A device with ≠ 2 channels → strip disabled with the status line
-message, nothing changed.
+message, nothing changed. Channel counts are per stream (`IChannelAudioVolume`), so the router
+leaves a mono or 5.1 stream alone and says "not stereo" only when no stream on the device is
+stereo (C3 review: one odd stream must not switch the strip off or block restoring).
 
 ### 5.4 Restoring
 

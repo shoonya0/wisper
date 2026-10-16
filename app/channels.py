@@ -8,11 +8,15 @@ volumes each session had **before** Wisper's first change, so a crash can't leav
 
 C2: `WasapiAudio`, the only COM code (§5.1): the default output, its sessions as `Session`s, and
 their channel volumes (`IChannelAudioVolume`, VERIFIED in the C0 spike, tools/ear_spike.py).
+
+C3: `Router`, the `ear-channels` thread (§5.2) that keeps every session at the volumes the rule gives it.
 """
 
 import ctypes
 import json
 import os
+import queue
+import threading
 from ctypes import POINTER, Structure, byref, c_float, c_uint, c_ushort, c_void_p, wstring_at
 from ctypes.wintypes import BOOL, DWORD, HANDLE, LPCWSTR, LPVOID, UINT
 from dataclasses import dataclass, field
@@ -466,3 +470,204 @@ class WasapiAudio:
         caller drops its `Session`s too (their handles are COM objects)."""
         self._enum = self._device = None
         self._device_id = ""
+
+
+# ---- C3: the router thread (§5.2, §5.4) ----------------------------------------------------------------------------
+
+LEFT, RIGHT = "left", "right"
+NOT_STEREO = "Earphones aren't stereo: ear channels are off."
+DRIFT = 1e-3  # volumes read back further than this from what Wisper set were changed by someone else
+
+
+def neither_message(names):
+    """Rule 3.2.2's status line: "X plays in neither ear." / "X and Y play in neither ear.", or ""."""
+    if not names:
+        return ""
+    if len(names) == 1:
+        return f"{names[0]} plays in neither ear."
+    return f"{', '.join(names[:-1])} and {names[-1]} play in neither ear."
+
+
+class Router:
+    """Keeps every session on the default output at the volumes `gains` gives it, and puts them back.
+
+    `start()`, `choose`, `volume`, `app_volume`, `reset` and `close` are called from the UI thread and only put
+    commands on a queue; everything else, COM included, runs on the `ear-channels` thread. Every `poll_s` (or as
+    soon as a command arrives) it runs `step()`: follow the default output, journal then set each new session,
+    re-apply changed or drifted gains, and restore every journaled session once the state is untouched again
+    (rule 3.2.1). `on_update(device_name, apps, warnings)` is called when what the strip shows changes;
+    `on_error(msg)` once when a step fails, after which the router changes nothing until `reset()`. Neither
+    callback may touch Tk. Tests call `step()` and `_command()` directly, without the thread."""
+
+    def __init__(self, audio, journal, on_update, on_error, poll_s=1.0):
+        self.audio, self.journal = audio, journal
+        self.on_update, self.on_error, self.poll_s = on_update, on_error, poll_s
+        self.left, self.right = Selection(), Selection()
+        self.volumes = {LEFT: 1.0, RIGHT: 1.0}
+        self.app_vols: dict[str, float] = {}
+        self.device_id, self.device_name = "", ""
+        self.applied: dict[str, tuple[float, float]] = {}  # identifier -> gains Wisper last set
+        self.names: dict[str, str] = {}                   # app key -> name, kept after the app closes (rule 3.2.7)
+        self.stopped = False
+        self._shown = None
+        self._commands: queue.Queue = queue.Queue()
+        self._thread: threading.Thread | None = None
+
+    # -- UI thread ---------------------------------------------------------------------------------------------------
+
+    def start(self):
+        self._thread = threading.Thread(target=self._run, name="ear-channels", daemon=True)
+        self._thread.start()
+
+    def choose(self, side, selection):
+        self._commands.put(("choose", side, selection))
+
+    def volume(self, side, v):
+        self._commands.put(("volume", side, v))
+
+    def app_volume(self, key, v):
+        self._commands.put(("app_volume", key, v))
+
+    def reset(self):
+        self._commands.put(("reset",))
+
+    def close(self, timeout=2.0):
+        """Restore what can be restored and end the thread (joined, `timeout` cap)."""
+        if self._thread is None:
+            return
+        self._commands.put(("close",))
+        self._thread.join(timeout)
+
+    # -- ear-channels thread -----------------------------------------------------------------------------------------
+
+    def _run(self):
+        comtypes.CoInitializeEx(comtypes.COINIT_MULTITHREADED)
+        try:
+            while True:
+                self.step()
+                try:
+                    cmd = self._commands.get(timeout=self.poll_s)
+                    while True:  # take every queued command before the next step (a dragged scale sends many)
+                        if cmd[0] == "close":
+                            return
+                        try:
+                            self._command(cmd)
+                        except Exception as e:  # noqa: BLE001 - a bad value (rule 3.2.9): report, keep the thread
+                            self._fail(e)
+                        cmd = self._commands.get_nowait()
+                except queue.Empty:
+                    pass
+        finally:
+            self._finish()
+
+    def _finish(self):
+        try:
+            if not self.stopped:
+                self._restore_all()
+        except Exception:  # noqa: BLE001 - closing must not raise; the journal restores at the next start
+            pass
+        self.audio.close()
+        comtypes.CoUninitialize()
+
+    def _command(self, cmd):
+        match cmd:
+            case ("choose", side, selection):
+                if side == LEFT:
+                    self.left = selection
+                else:
+                    self.right = selection
+            case ("volume", side, v):
+                self.volumes[side] = _clamp(v)
+            case ("app_volume", key, v):
+                self.app_vols[key] = _clamp(v)
+            case ("reset",):
+                self.left, self.right = Selection(), Selection()
+                self.volumes = {LEFT: 1.0, RIGHT: 1.0}
+                self.app_vols = {}
+                self.stopped = False
+                self._shown = None
+
+    def untouched(self):
+        return untouched(self.left, self.right, self.volumes[LEFT], self.volumes[RIGHT], self.app_vols)
+
+    def gains_for(self, key):
+        return gains(key, self.left, self.right, self.volumes[LEFT], self.volumes[RIGHT], self.app_vols.get(key, 1.0))
+
+    def step(self):
+        if self.stopped:
+            return
+        try:
+            self._step()
+        except Exception as e:  # noqa: BLE001 - rule 3.2.9: nothing escapes the thread, never a dialog
+            self._fail(e)
+
+    def _fail(self, e):
+        if self.stopped:
+            return
+        self.stopped = True
+        try:
+            self._restore_all()
+        except Exception:  # noqa: BLE001 - the journal keeps what couldn't be restored
+            pass
+        self.on_error(str(e) or type(e).__name__)
+
+    def _step(self):
+        device_id, name = self.audio.default_output()
+        if device_id != self.device_id:
+            if self.device_id:
+                try:
+                    self._restore_all()  # §5.4: the old device's sessions first
+                except Exception:  # noqa: BLE001 - the old device may be gone; the journal keeps its entries
+                    pass
+            self.device_id, self.device_name, self.applied = device_id, name, {}
+        sessions = self.audio.sessions(device_id)
+        # Channel counts are per stream: a mono or 5.1 stream can't be panned and is left alone. Only a device
+        # where no stream is stereo switches the strip off (§5.3).
+        two = [s for s in sessions if s.channels == 2]
+        if self.untouched():
+            self._restore(two)
+        else:
+            for s in two:
+                self._apply(s)
+        for s in sessions:
+            self.names[s.key] = s.name
+        self._show(sessions, bool(two) or not sessions)
+
+    def _restore(self, sessions):
+        """Back to the volumes from before Wisper's first change, if Wisper changed them (this run or a crashed
+        one). One journal snapshot for the whole pass: processes of one exe share an identifier (§4.1)."""
+        entries = self.journal.entries()
+        done = set()
+        for s in sessions:
+            if s.identifier in entries:
+                self.audio.set(s, *entries[s.identifier])
+                done.add(s.identifier)
+            self.applied.pop(s.identifier, None)
+        for ident in done:
+            self.journal.forget(ident)
+
+    def _apply(self, s):
+        g = self.gains_for(s.key)
+        last = self.applied.get(s.identifier)
+        if last is None:
+            self.journal.remember(s.identifier, *s.volumes)  # first: a crash after it only restores what was there
+        elif last == g and all(abs(a - b) <= DRIFT for a, b in zip(s.volumes, g, strict=True)):
+            return
+        self.audio.set(s, *g)
+        self.applied[s.identifier] = g
+
+    def _restore_all(self):
+        if self.device_id:
+            self._restore([s for s in self.audio.sessions(self.device_id) if s.channels == 2])
+        self.applied = {}
+
+    def _show(self, sessions, stereo):
+        running = {s.key: s.name for s in sessions}
+        checked = (self.left.keys | self.right.keys) - running.keys()
+        apps = [App(k, n, True) for k, n in running.items()]
+        apps += [App(k, self.names.get(k, k), False) for k in sorted(checked)]
+        warning = NOT_STEREO if not stereo else neither_message(silent(apps, self.left, self.right))
+        shown = (self.device_name, sorted(apps), [warning] if warning else [])
+        if shown != self._shown:
+            self._shown = shown
+            self.on_update(*shown)

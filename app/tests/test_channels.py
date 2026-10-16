@@ -279,15 +279,20 @@ def test_journal_path_is_in_local_app_data(monkeypatch, tmp_path):
 class FakeAudio:
     """Stands in for WasapiAudio (same public methods): sessions on named devices, volumes kept in memory."""
 
-    def __init__(self, device=("dev-1", "Speakers"), sessions=()):
+    def __init__(self, device=("dev-1", "Speakers"), sessions=(), journal=None):
         self.device = device
         self.by_device = {device[0]: list(sessions)}
         self.calls = []
+        self.fail: Exception | None = None  # an exception sessions() raises
+        self.journal = journal    # when given, set() records whether the session was journaled first
+        self.journaled_first = []
 
     def default_output(self):
         return self.device
 
     def sessions(self, device_id):
+        if self.fail:
+            raise self.fail
         return [channels.Session(s.key, s.name, s.pid, s.identifier, s.channels, s.state, s.volumes, handle=s)
                 for s in self.by_device.get(device_id, [])]
 
@@ -297,6 +302,8 @@ class FakeAudio:
     def set(self, session, left, right):
         if session.channels != 2:
             raise ValueError("not stereo")
+        if self.journal is not None:
+            self.journaled_first.append(session.identifier in self.journal)
         self.calls.append((session.identifier, left, right))
         session.handle.volumes = (left, right)
 
@@ -413,3 +420,280 @@ def test_wasapi_sets_reads_and_restores_a_childs_channel_volumes(real_audio):  #
         assert _wait_session(audio, device_id, pid).volumes == (1.0, 1.0)  # the restore outlived the process
     finally:
         child.wait()
+
+
+# ---- C3: the router (§5.2, §5.4, rules 3.2.1-3.2.9) ---------------------------------------------------------------
+
+def sess(key, name, ident, volumes=(1.0, 1.0), pid=1, chans=2):
+    return channels.Session(key, name, pid, ident, chans, channels.STATE_ACTIVE, volumes)
+
+
+def three():
+    return [sess(DISCORD, "Discord", ID_A), sess(ZOOM, "Zoom Meetings", ID_B), sess(CHROME, "Google Chrome", ID_C)]
+
+
+class Rig:
+    """A router on FakeAudio, its journal in tmp_path, and what it reported."""
+
+    def __init__(self, tmp_path, sessions=None, journal=None):
+        self.path = tmp_path / "ear.json"
+        if journal is not None:
+            self.path.write_text(json.dumps(journal), encoding="utf-8")
+        self.journal = Journal(self.path)
+        self.audio = FakeAudio(sessions=three() if sessions is None else sessions, journal=self.journal)
+        self.updates, self.errors = [], []
+        self.router = channels.Router(self.audio, self.journal, lambda *a: self.updates.append(a), self.errors.append)
+
+    def do(self, *cmd):
+        self.router._command(cmd)
+        self.router.step()
+
+    def vols(self, device="dev-1"):
+        return {s.identifier: s.volumes for s in self.audio.by_device[device]}
+
+
+def test_router_start_up_changes_nothing(tmp_path):  # rule 3.2.1, D2
+    rig = Rig(tmp_path)
+    rig.router.step()
+    rig.router.step()
+    assert rig.audio.calls == []
+    assert not rig.path.exists()
+    [(device, apps, warnings)] = rig.updates  # once: the second step showed nothing new
+    assert device == "Speakers" and warnings == []
+    assert {a.name for a in apps} == {"Discord", "Google Chrome", "Zoom Meetings"}
+
+
+def test_router_journals_each_session_before_changing_it(tmp_path):  # §5.2 step 2, rule 3.2.2
+    rig = Rig(tmp_path, sessions=[sess(DISCORD, "Discord", ID_A, (0.8, 0.8)), sess(ZOOM, "Zoom Meetings", ID_B),
+                                  sess(CHROME, "Google Chrome", ID_C)])
+    rig.router._command(("choose", channels.LEFT, only(DISCORD)))
+    rig.do("choose", channels.RIGHT, only(ZOOM))
+    assert rig.vols() == {ID_A: (1.0, 0.0), ID_B: (0.0, 1.0), ID_C: (0.0, 0.0)}
+    assert rig.audio.journaled_first == [True, True, True]
+    assert Journal(rig.path).entries() == {ID_A: (0.8, 0.8), ID_B: (1.0, 1.0), ID_C: (1.0, 1.0)}
+    assert rig.updates[-1][2] == ["Google Chrome plays in neither ear."]
+
+
+def test_router_back_to_all_apps_restores_and_empties_the_journal(tmp_path):  # rule 3.2.1, §5.4
+    rig = Rig(tmp_path, sessions=[sess(DISCORD, "Discord", ID_A, (0.8, 0.6)), sess(ZOOM, "Zoom Meetings", ID_B)])
+    rig.do("choose", channels.LEFT, only(DISCORD))
+    assert rig.vols() == {ID_A: (1.0, 1.0), ID_B: (0.0, 1.0)}  # rule 3.2.3: Right is still All apps
+    rig.do("choose", channels.LEFT, Selection())
+    assert rig.vols() == {ID_A: (0.8, 0.6), ID_B: (1.0, 1.0)}  # what each had before Wisper, not 100 %
+    assert rig.journal.entries() == {} and not rig.path.exists()
+    assert rig.router.applied == {}
+
+
+def test_router_reapplies_only_what_a_command_changed(tmp_path):
+    rig = Rig(tmp_path)
+    rig.do("choose", channels.LEFT, only(DISCORD))
+    rig.audio.calls.clear()
+    rig.router.step()
+    assert rig.audio.calls == []  # nothing changed: nothing set
+    rig.do("volume", channels.LEFT, 0.5)
+    assert rig.audio.calls == [(ID_A, 0.5, 1.0)]  # Zoom and Chrome are (0, 1) either way
+
+
+def test_router_reapplies_volumes_someone_else_changed(tmp_path):  # §5.2: drift (an app, the Volume Mixer)
+    rig = Rig(tmp_path)
+    rig.do("choose", channels.LEFT, only(DISCORD))
+    rig.audio.by_device["dev-1"][1].volumes = (1.0, 1.0)  # Zoom reset its own volumes
+    rig.audio.calls.clear()
+    rig.router.step()
+    assert rig.audio.calls == [(ID_B, 0.0, 1.0)]
+    assert rig.journal.entries()[ID_B] == (1.0, 1.0)  # the journal still has the volumes from before Wisper
+
+
+def test_router_app_volume(tmp_path):  # D9
+    rig = Rig(tmp_path)
+    rig.router._command(("choose", channels.LEFT, only(DISCORD)))
+    rig.do("app_volume", DISCORD, 0.5)
+    assert rig.vols()[ID_A] == (0.5, 0.5)
+    rig.do("volume", channels.RIGHT, 0.4)
+    assert rig.vols()[ID_A] == pytest.approx((0.5, 0.2))
+    assert rig.vols()[ID_B] == pytest.approx((0.0, 0.4))
+
+
+def test_router_app_gone_and_back(tmp_path):  # rules 3.2.6, 3.2.7
+    rig = Rig(tmp_path)
+    rig.router._command(("choose", channels.LEFT, only(DISCORD)))
+    rig.do("choose", channels.RIGHT, only(ZOOM))
+    dev = rig.audio.by_device["dev-1"]
+    discord = dev.pop(0)
+    dev.pop()  # Chrome (unchecked) closes too
+    rig.router.step()
+    _, apps, _ = rig.updates[-1]
+    assert App(DISCORD, "Discord", False) in apps           # checked: stays, "(not running)"
+    assert all(a.key != CHROME for a in apps)               # unchecked: removed
+    discord.volumes = (1.0, 0.0)                             # back; Windows remembered what Wisper set
+    dev.append(discord)
+    rig.audio.calls.clear()
+    rig.router.step()
+    assert rig.audio.calls == []
+    assert App(DISCORD, "Discord", True) in rig.updates[-1][1]
+    edge = sess(r"c:\edge\msedge.exe", "Microsoft Edge", "id-edge")
+    dev.append(edge)                                        # a new app: listed unchecked, starts silent
+    rig.router.step()
+    assert edge.volumes == (0.0, 0.0)
+    assert App(edge.key, "Microsoft Edge", True) in rig.updates[-1][1]
+    assert rig.updates[-1][2] == ["Microsoft Edge plays in neither ear."]
+    assert rig.router.left == only(DISCORD)                 # the selection didn't change
+
+
+def test_router_device_change_restores_the_old_device_first(tmp_path):  # §5.3, §5.4
+    rig = Rig(tmp_path)
+    rig.router._command(("choose", channels.LEFT, only(DISCORD)))
+    rig.do("choose", channels.RIGHT, only(ZOOM))
+    new = [sess(DISCORD, "Discord", "dev2-discord")]
+    rig.audio.by_device["dev-2"] = new
+    rig.audio.device = ("dev-2", "Headphones")
+    rig.router.step()
+    assert rig.vols("dev-1") == {ID_A: (1.0, 1.0), ID_B: (1.0, 1.0), ID_C: (1.0, 1.0)}
+    assert new[0].volumes == (1.0, 0.0)
+    assert set(rig.journal.entries()) == {"dev2-discord"}
+    assert rig.updates[-1][0] == "Headphones"
+
+
+def test_router_leftover_journal_restores_each_session_when_it_appears(tmp_path):  # §5.4: after a crash
+    dev = [sess(ZOOM, "Zoom Meetings", ID_B, (0.0, 1.0))]   # Windows remembered the crashed run's volumes
+    rig = Rig(tmp_path, sessions=dev, journal={ID_A: [1.0, 1.0], ID_B: [0.9, 0.9]})
+    dev = rig.audio.by_device["dev-1"]
+    rig.router.step()
+    assert dev[0].volumes == (0.9, 0.9)
+    assert rig.journal.entries() == {ID_A: (1.0, 1.0)}      # Discord isn't running yet: kept
+    dev.append(sess(DISCORD, "Discord", ID_A, (1.0, 0.0)))
+    rig.router.step()
+    assert dev[1].volumes == (1.0, 1.0)
+    assert not rig.path.exists()
+
+
+def test_router_leftover_journal_keeps_the_original_while_changing(tmp_path):
+    dev = [sess(DISCORD, "Discord", ID_A, (1.0, 0.0))]      # left over from a crash: (1, 0) isn't the original
+    rig = Rig(tmp_path, sessions=dev, journal={ID_A: [1.0, 1.0]})
+    rig.do("choose", channels.LEFT, only(ZOOM))
+    assert dev[0].volumes == (0.0, 1.0)
+    assert rig.journal.entries() == {ID_A: (1.0, 1.0)}      # not overwritten with (1, 0)
+
+
+def test_router_reset_restores_everything(tmp_path):
+    rig = Rig(tmp_path)
+    rig.router._command(("choose", channels.LEFT, only(DISCORD)))
+    rig.router._command(("volume", channels.RIGHT, 0.3))
+    rig.do("app_volume", ZOOM, 0.5)
+    rig.do("reset")
+    assert rig.vols() == {ID_A: (1.0, 1.0), ID_B: (1.0, 1.0), ID_C: (1.0, 1.0)}
+    assert rig.router.untouched() and not rig.path.exists()
+
+
+def test_router_device_not_stereo_changes_nothing(tmp_path):  # §5.3
+    rig = Rig(tmp_path, sessions=[sess(DISCORD, "Discord", ID_A, (1.0,) * 6, chans=6)])
+    rig.do("choose", channels.LEFT, only(DISCORD))
+    assert rig.audio.calls == []
+    assert rig.updates[-1][2] == [channels.NOT_STEREO]
+
+
+def test_router_error_reported_once_restores_and_reset_retries(tmp_path):  # rule 3.2.9
+    rig = Rig(tmp_path)
+    rig.router._command(("choose", channels.LEFT, only(DISCORD)))
+    rig.do("choose", channels.RIGHT, only(ZOOM))
+    rig.audio.fail = OSError("device gone")
+    rig.router.step()  # doesn't raise
+    rig.router.step()
+    assert rig.errors == ["device gone"]
+    rig.audio.fail = None
+    before = list(rig.audio.calls)
+    rig.router.step()
+    assert rig.router.stopped and rig.audio.calls == before  # stopped: changes nothing until Reset
+    assert rig.vols()[ID_A] == (1.0, 0.0)                     # the restore failed too; the journal still has it
+    assert ID_A in rig.journal
+    rig.do("reset")
+    assert not rig.router.stopped
+    assert rig.vols() == {ID_A: (1.0, 1.0), ID_B: (1.0, 1.0), ID_C: (1.0, 1.0)} and not rig.path.exists()
+
+
+def test_router_error_while_applying_restores_what_it_can(tmp_path):
+    rig = Rig(tmp_path)
+    real_set = rig.audio.set
+
+    def set_fails_for_chrome(session, left, right):
+        if session.identifier == ID_C and (left, right) == (0.0, 0.0):
+            raise OSError("Chrome said no")
+        real_set(session, left, right)
+    rig.audio.set = set_fails_for_chrome
+    rig.router._command(("choose", channels.LEFT, only(DISCORD)))
+    rig.do("choose", channels.RIGHT, only(ZOOM))
+    assert rig.errors == ["Chrome said no"]
+    assert rig.vols() == {ID_A: (1.0, 1.0), ID_B: (1.0, 1.0), ID_C: (1.0, 1.0)}
+    assert not rig.path.exists()
+
+
+def test_router_restores_every_process_of_one_app(tmp_path):  # C3 review: the identifier has no pid (§4.1)
+    sessions = [sess(DISCORD, "Discord", ID_A, (0.7, 0.7), pid=1), sess(DISCORD, "Discord", ID_A, (0.7, 0.7), pid=2),
+                sess(ZOOM, "Zoom Meetings", ID_B)]
+    rig = Rig(tmp_path, sessions=sessions)
+    rig.do("choose", channels.LEFT, only(ZOOM))
+    assert [s.volumes for s in rig.audio.by_device["dev-1"]] == [(0.0, 1.0), (0.0, 1.0), (1.0, 1.0)]
+    rig.do("reset")
+    assert [s.volumes for s in rig.audio.by_device["dev-1"]] == [(0.7, 0.7), (0.7, 0.7), (1.0, 1.0)]
+    assert not rig.path.exists()
+
+
+def test_router_a_mono_stream_doesnt_switch_the_strip_off(tmp_path):  # C3 review: channels are per stream
+    rig = Rig(tmp_path)
+    rig.router._command(("choose", channels.LEFT, only(DISCORD)))
+    rig.do("choose", channels.RIGHT, only(ZOOM))
+    mono = sess(r"c:\old\beeper.exe", "Beeper", "id-mono", (1.0,), chans=1)
+    rig.audio.by_device["dev-1"].append(mono)
+    rig.router.step()
+    assert rig.updates[-1][2] != [channels.NOT_STEREO]
+    assert rig.vols()[ID_A] == (1.0, 0.0) and mono.volumes == (1.0,)  # stereo apps still routed, the mono one alone
+    rig.do("reset")
+    assert {k: v for k, v in rig.vols().items() if k != "id-mono"} == {ID_A: (1.0, 1.0), ID_B: (1.0, 1.0),
+                                                                        ID_C: (1.0, 1.0)}
+    assert not rig.path.exists()
+
+
+def test_router_bad_command_is_reported_not_fatal(tmp_path):  # C3 review: rule 3.2.9 for commands too
+    rig = Rig(tmp_path)
+    rig.router.poll_s = 0.01
+    rig.router.start()
+    try:
+        rig.router.volume(channels.LEFT, "")  # what float() rejects
+        end = time.time() + 2
+        while not rig.errors and time.time() < end:
+            time.sleep(0.01)
+        assert len(rig.errors) == 1
+        assert rig.router._thread is not None and rig.router._thread.is_alive()
+        rig.router.reset()
+        rig.router.choose(channels.LEFT, only(DISCORD))
+        rig.router.choose(channels.RIGHT, only(ZOOM))
+        while rig.vols()[ID_A] != (1.0, 0.0) and time.time() < end:
+            time.sleep(0.01)
+        assert rig.vols()[ID_A] == (1.0, 0.0)  # Reset brought it back
+    finally:
+        rig.router.close()
+
+
+def test_neither_message():
+    assert channels.neither_message([]) == ""
+    assert channels.neither_message(["Chrome"]) == "Chrome plays in neither ear."
+    assert channels.neither_message(["A", "B", "C"]) == "A, B and C play in neither ear."
+
+
+def test_router_thread_applies_commands_and_close_restores(tmp_path):  # the real thread, FakeAudio
+    rig = Rig(tmp_path)
+    rig.router.poll_s = 0.01
+    rig.router.start()
+    try:
+        rig.router.choose(channels.LEFT, only(DISCORD))
+        rig.router.choose(channels.RIGHT, only(ZOOM))
+        end = time.time() + 2
+        while rig.vols()[ID_A] != (1.0, 0.0) and time.time() < end:
+            time.sleep(0.01)
+        assert rig.vols()[ID_A] == (1.0, 0.0)
+    finally:
+        rig.router.close()
+    assert rig.router._thread is not None and not rig.router._thread.is_alive()
+    assert rig.vols() == {ID_A: (1.0, 1.0), ID_B: (1.0, 1.0), ID_C: (1.0, 1.0)}
+    assert not rig.path.exists()
+    assert "close" in rig.audio.calls  # WasapiAudio.close() ran on the thread

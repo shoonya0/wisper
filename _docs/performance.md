@@ -210,3 +210,13 @@ a child process plays a 440 Hz tone at 0.005; another process sets its session's
 | One poll (default output + friendly name, list sessions with exe path, name, identifier, volumes) | 3.10 ms wall, 0.31 ms CPU (mean of 50) → **0.03 % of a core** at 1 poll/s (target < 0.5 %) |
 
 No audio passes through Wisper, so there's no added delay (spec §4.1).
+
+**C3, the router's poll (2026-10-16)**: `Router.step()` with the real `WasapiAudio` on its own
+thread (COM multi-threaded, as in the app), start-up state (changes nothing; the journal stayed
+empty), mean of 100 after a warm-up, 3 runs, 1 session playing (System sounds):
+
+| Measure | Result |
+|---|---|
+| One step (default output, list sessions, show) | 2.85–5.18 ms wall, 0.31–0.78 ms CPU (`thread_time`) → **0.03–0.08 % of a core** at 1 poll/s (target < 0.5 %) |
+
+Not measured: a step with several apps playing and gains being re-applied (C6's manual run).
