@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | In progress (2026-10-16): **C0–C4 done** on `feature/ear-channels` (C4's manual look pending); next C5. Earlier, C0 done: §4.1 re-done in Python and the browsers checked (§4.4, VERIFIED; Discord/Zoom not seen, covered by §5.2's re-apply); decisions D1–D8 confirmed by the user and D9 (volume per app) added (2026-10-15) |
+| Status | In progress (2026-10-16): **C0–C5 done** on `feature/ear-channels` (C4 and C5 checked by the user); next C6. Earlier, C0 done: §4.1 re-done in Python and the browsers checked (§4.4, VERIFIED; Discord/Zoom not seen, covered by §5.2's re-apply); decisions D1–D8 confirmed by the user and D9 (volume per app) added (2026-10-15) |
 | Date | 2026-10-15 |
 | Owner | shoonya0 |
 | Priority | **Highest** (user, 2026-10-15): goes before narration latency |

@@ -197,13 +197,14 @@ CABLE = {"index": 1, "name": "CABLE Input (VB-Audio Virtual Cable)",
 
 @pytest.fixture
 def make_window(monkeypatch):
-    """make_window(engine=None, outputs=(SPEAKERS, CABLE), mics=()): engine None = Kokoro files missing.
+    """make_window(engine=None, outputs=(SPEAKERS, CABLE), mics=(), ear_router=FakeRouter): engine None = Kokoro
+    files missing; ear_router(on_update, on_error) stands in for app.make_ear_router.
 
     No mics by default, so the mic pass-through (N8) stays off unless a test asks for it.
     """
     windows = []
 
-    def make(engine=None, outputs=(SPEAKERS, CABLE), mics=()):
+    def make(engine=None, outputs=(SPEAKERS, CABLE), mics=(), ear_router=FakeRouter):
         def load():
             if engine is None:
                 raise FileNotFoundError(app.tts.MISSING_MESSAGE)
@@ -219,7 +220,7 @@ def make_window(monkeypatch):
         monkeypatch.setattr(app.playback, "PaInput", FakeInput)
         monkeypatch.setattr(app.terminal, "Terminal", FakeTerminal)          # never a real `deepseek`
         monkeypatch.setattr(app, "prepare_workspace", lambda path: None)     # no folder, no `git init`
-        monkeypatch.setattr(app, "make_ear_router", FakeRouter)              # no COM, no real journal
+        monkeypatch.setattr(app, "make_ear_router", ear_router)              # no COM, no real journal
         FakeTerminal.instances = []
         FakeOutput.instances = []
         FakeInput.instances, FakeInput.failing = [], None

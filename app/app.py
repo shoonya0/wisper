@@ -637,10 +637,14 @@ class App:
         except (OSError, ValueError) as e:
             self.ear_router = None        # e.g. the restore journal can't be read: never write over it
             self.ear_status_var.set(f"{EAR_OFF}: {e}")
-            for w in (*self.ear_buttons.values(), *self.ear_scales.values(), self.ear_app_box, self.ear_app_scale,
-                      self.ear_reset_btn):
-                w.state(["disabled"])
+            self._ear_enable(False, keep_reset=False)
         self._ear_rebuild()
+
+    def _ear_enable(self, on, keep_reset=True):
+        """Menus and scales on or off (§5.3: off while the earphones aren't stereo); Reset stays usable then."""
+        for w in (*self.ear_buttons.values(), *self.ear_scales.values(), self.ear_app_box, self.ear_app_scale,
+                  *([] if keep_reset else [self.ear_reset_btn])):
+            w.state(["!disabled"] if on else ["disabled"])
 
     def _ear_scale_row(self, row, what):
         ttk.Label(row, text="  Volume").pack(side="left")
@@ -742,6 +746,7 @@ class App:
                 self.ear_device_var.set(f"Earphones: {device}")
                 self.ear_apps = list(apps)
                 self.ear_status_var.set(warnings[0] if warnings else "")
+                self._ear_enable(channels.NOT_STEREO not in warnings)
                 self._ear_rebuild()
             elif kind == "ear_error":     # rule 3.2.9: the status line, never a dialog
                 self.ear_status_var.set(f"{EAR_STOPPED}: {payload[0]}")

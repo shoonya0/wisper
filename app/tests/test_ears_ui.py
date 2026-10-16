@@ -1,15 +1,19 @@
 """The ear channels strip (spec 2026-10-15-ear-channels §3.1, §3.2, §5.5; step C4) with a fake router.
 
 The real Tk window (invisible, conftest.make_window); FakeRouter records what the strip asks for and plays the
-router thread's updates and errors. No COM, no real journal.
+router thread's updates and errors. No audio device and no real journal: the one test with a real
+channels.Router (the start-up replay) gives it test_channels.FakeAudio and a journal in tmp_path.
 """
 
+import json
 import time
 
 import pytest
 from conftest import FakeRouter, pump
+from test_channels import FakeAudio
 
 import app
+import channels
 from channels import ALL_LABEL, LEFT, RIGHT, App, Selection
 
 DISCORD = r"c:\apps\discord\discord.exe"
@@ -159,3 +163,43 @@ def test_router_that_cant_start_leaves_the_strip_off(make_window, monkeypatch):
     assert win.ear_status_var.get() == f"{app.EAR_OFF}: ear-channels-restore.json is locked"
     assert win.ear_buttons[LEFT].instate(["disabled"]) and win.ear_reset_btn.instate(["disabled"])
     assert win.start_btn is not None                                     # the rest of Wisper still works
+
+
+# ---- C5: lifetime (spec §5.3, §5.4; acceptance A5) ----------------------------------------------------------------
+
+def test_not_stereo_disables_the_menus_and_scales(window):  # §5.3
+    updated(window, warnings=[channels.NOT_STEREO])
+    assert window.ear_status_var.get() == channels.NOT_STEREO
+    controls = [*window.ear_buttons.values(), *window.ear_scales.values(), window.ear_app_box, window.ear_app_scale]
+    assert all(w.instate(["disabled"]) for w in controls)
+    assert window.ear_reset_btn.instate(["!disabled"])                  # Reset still puts everything back
+    updated(window)                                                      # stereo earphones again
+    assert all(w.instate(["!disabled"]) for w in controls)
+    assert window.ear_app_box.instate(["readonly"])
+
+
+def test_on_close_puts_the_apps_back_before_pyaudio_goes_away(window):  # §5.4: router.close() before pa.terminate()
+    order = []
+    router().close = lambda timeout=2.0: order.append("ears restored")
+    window.pa.terminate = lambda: order.append("pyaudio terminated")
+    window.root.destroy = lambda: order.append("window destroyed")      # the fixture's teardown destroys it
+    try:
+        window.on_close()
+    finally:
+        del window.root.destroy
+    assert order == ["ears restored", "pyaudio terminated", "window destroyed"]
+
+
+def test_leftover_journal_is_put_back_at_start_up(make_window, tmp_path):  # §5.4, A5: after a crash or a kill
+    path = tmp_path / "ear-channels-restore.json"
+    path.write_text(json.dumps({"id-chrome": [1.0, 1.0]}), encoding="utf-8")
+    chrome = channels.Session(CHROME, "Google Chrome", 5, "id-chrome", 2, channels.STATE_ACTIVE, (1.0, 0.0))
+    audio = FakeAudio(sessions=[chrome])                                 # Windows kept the killed run's (1, 0)
+
+    def real_router(on_update, on_error):
+        return channels.Router(audio, channels.Journal(path), on_update, on_error, poll_s=0.05)
+
+    win = make_window(ear_router=real_router)
+    pump(win, lambda: chrome.volumes == (1.0, 1.0) and not path.exists())
+    pump(win, lambda: "Google Chrome" in win.ear_app_box.cget("values"))
+    assert win.ear_buttons[LEFT].cget("text") == ALL_LABEL              # every start is All apps (§2 non-goal)
