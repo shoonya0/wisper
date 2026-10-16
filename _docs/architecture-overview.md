@@ -115,6 +115,15 @@ independent leaves: each depends only on third-party libraries or the stdlib.
    Listening never restarts by itself.
 6. **Lifetime (P5, D10)**: `main()` (`app/app.py:1081`) calls `priority.kill_children_with_me()`
    before anything starts, so `deepseek` and all it starts die with Wisper however it ends.
+7. **Ear channels (spec `2026-10-15-ear-channels`)**: `App.__init__` builds the strip (`_build_ears`, packed
+   at the bottom before the panes) and starts `channels.Router` (`make_ear_router`). Every 1 s or on a command
+   the `ear-channels` thread reads the default output, journals each new session's volumes to
+   `%LOCALAPPDATA%\Wisper\ear-channels-restore.json`, then sets its left/right channel volumes from `gains()`
+   (no audio passes through Wisper). Menu checks, scales and Reset call `router.choose` / `volume` /
+   `app_volume` / `reset`, which only queue commands; the router posts `("ear_update", …)` / `("ear_error", msg)`
+   to `ear_results`, which `_poll` drains to rebuild the menus and the status line. Back to All apps at 100 %,
+   Reset, a device change and `on_close` (before `pa.terminate()`) restore the journaled volumes; a journal
+   left by a crash is replayed as each session reappears.
 
 ## Threading and state
 
@@ -135,6 +144,9 @@ independent leaves: each depends only on third-party libraries or the stdlib.
 - The capture thread only produces chunks. The UI thread only reads `results`.
 - The **`answers-inbox`** thread (P4) only accepts hook connections and puts
   `("ai_answer", text)` on `results`; it touches no Tk or audio object.
+- The **`ear-channels`** thread alone touches COM audio objects (`WasapiAudio`; COM multi-threaded,
+  initialised and uninitialised on that thread). The UI thread only queues commands; results come back on
+  `ear_results` as plain `App` data (keys and names), never `Session`s. `on_close` joins it (2 s cap).
 - Shared attributes read across threads without locks: `busy`, `language`,
   `loaded_model_path`, `last_text`. This is acceptable under the GIL but fragile; see
   current-state known issues.
