@@ -196,3 +196,17 @@ buffer. The call app and the network come on top. PortAudio reports the same 22 
 A first run picked `Microsoft Sound Mapper - Input` (MME, from `capture.list_sources`)
 and the delay went from 16 ms to 266 ms within 8 s. So the pass-through lists WASAPI
 mics only (`playback.list_inputs`). Not measured: a run of 10 minutes or more.
+
+### Ear channels: per-app channel volumes (C0, 2026-10-15)
+
+`tools/ear_spike.py check` (comtypes, Python 3.12) on `Speakers (4- High Definition Audio Device)`:
+a child process plays a 440 Hz tone at 0.005; another process sets its session's
+`IChannelAudioVolume` and records the speakers' loopback.
+
+| Measure | Result |
+|---|---|
+| `SetChannelVolume` × 2 channels | 0.32–0.36 ms (4 changes) |
+| Effect in the loopback | already there in the first block read 0.3 s after the change |
+| One poll (default output + friendly name, list sessions with exe path, name, identifier, volumes) | 3.10 ms wall, 0.31 ms CPU (mean of 50) → **0.03 % of a core** at 1 poll/s (target < 0.5 %) |
+
+No audio passes through Wisper, so there's no added delay (spec §4.1).

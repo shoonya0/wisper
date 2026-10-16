@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft (2026-10-15): spec and steps written, C0's main question answered (§4.1); decisions D1–D8 proposed, waiting for the user's yes |
+| Status | Draft (2026-10-15): C0 done: §4.1 re-done in Python and the browsers checked (§4.4, VERIFIED; Discord/Zoom not seen, covered by §5.2's re-apply); decisions D1–D8 confirmed by the user and D9 (volume per app) added (2026-10-15) |
 | Date | 2026-10-15 |
 | Owner | shoonya0 |
 | Priority | **Highest** (user, 2026-10-15): goes before narration latency |
@@ -31,7 +31,8 @@ Discord call or the meeting hear the user's mic exactly as before (user, 2026-10
 3. When an app starts playing sound (or stops existing), **both dropdowns update** on
    their own, keeping what is chosen.
 4. Choosing apps in a channel makes exactly those apps heard in that ear; each ear has its own
-   volume. This is "full control" of the two channels (rules §3.2).
+   volume and each app its own volume. This is "full control" of the two channels (rules
+   §3.2; the user, 2026-10-15: per-ear volume and per-app volume).
 5. Nothing Wisper changes outlives it: closing Wisper, Reset, or the next start after a
    crash puts every app back the way it was (§4.2 explains why this matters).
 
@@ -60,6 +61,7 @@ Packed at the bottom of the root window **before** the panes (the same reason as
 │ Ear channels   Earphones: Speakers (High Definition Audio Device)        [Reset]  │
 │ Left ear:  [Discord               ▾]  Volume [━━━━━━━━━━━━○──]  85 %             │
 │ Right ear: [Zoom Meetings, Edge   ▾]  Volume [━━━━━━━━━━━━━━○] 100 %             │
+│ App: [Discord             ▾]  Volume [━━━━━━━━━○─────]  60 %                       │
 │ YouTube (Chrome) plays in neither ear.                                             │
 └────────────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -69,6 +71,7 @@ Packed at the bottom of the root window **before** the panes (the same reason as
 | Earphones | Name of the **Windows default output** (where the wired earphones play). It follows the default: plug in, switch device in Windows → the strip moves to the new device (§5.3) |
 | Left ear / Right ear | A dropdown (`ttk.Menubutton` + a menu of check items, so one ear can take several apps): **All apps (default)**, a separator, then each app that has sound on the earphones, sorted by name. The button shows the chosen names, or "All apps (default)" |
 | Volume | 0–100 % per ear (`ttk.Scale`), default 100 %. Applies at once while dragging (throttled to ~20 changes/s) |
+| App / Volume | Per-app volume (D9): a `ttk.Combobox` (read-only) of the apps in the menus and a 0–100 % scale for the chosen app, default 100 %. It multiplies the ear's volume in both ears. Kept while the app is "(not running)"; Reset puts every app back to 100 % |
 | Reset | Both ears back to All apps at 100 %; every app back to what it had before Wisper (§5.4) |
 | Status line | Says what isn't obvious: "X plays in neither ear.", "Earphones aren't stereo: ear channels are off.", "Ear channels stopped: <error>". Empty otherwise |
 
@@ -77,11 +80,11 @@ Packed at the bottom of the root window **before** the panes (the same reason as
 For each app **A** playing on the earphones, Wisper sets A's left and right volume:
 
 ```text
-left(A)  = left_volume   if Left ear  is "All apps" or A is checked in Left ear  else 0
-right(A) = right_volume  if Right ear is "All apps" or A is checked in Right ear else 0
+left(A)  = left_volume  × app_volume(A)  if Left ear  is "All apps" or A is checked in Left ear  else 0
+right(A) = right_volume × app_volume(A)  if Right ear is "All apps" or A is checked in Right ear else 0
 ```
 
-1. **Both All apps at 100 %** (the start-up state): Wisper changes nothing; every app has
+1. **Both All apps, every volume 100 %** (the start-up state): Wisper changes nothing; every app has
    the volumes it had before Wisper.
 2. **The user's example**: Left = Discord, Right = Zoom Meetings → Discord only in the
    left ear, Zoom only in the right. An app checked in neither (YouTube in Chrome) plays in
@@ -124,6 +127,17 @@ change it. Spike (C# through PowerShell, files in the session scratchpad, re-don
 | Enumerate sessions on the default output (`IMMDeviceEnumerator` → `IAudioSessionManager2` → `IAudioSessionEnumerator`) | the system-sounds session and a separate `python` process playing silence: both QI to `IChannelAudioVolume`, 2 channels, L = R = 1.0 |
 | Child process plays a 440 Hz tone at 0.005 in both channels; another process sets its session's channel volumes; a third records the speakers' loopback (RMS per channel) | both: L 0.00354 / R 0.00354 · set (1, 0): L 0.00354 / **R 0.00000** · set (0, 1): **L 0.00000** / R 0.00354 · set (0.5, 1): **L 0.00177** / R 0.00354 |
 
+**Re-done in Python (C0, `tools/ear_spike.py check`, comtypes 1.4.17; VERIFIED 2026-10-15)**:
+read back after each set (1, 0), (0, 1), (0.5, 1), (1, 1) equals what was set; loopback
+L/R RMS 0.00354/0.00354 · 0.00354/**0.00000** · **0.00000**/0.00354 · **0.00177**/0.00354 ·
+0.00354/0.00354; persistence as in §4.2 (run 2 starts at (0.5, 1), run 3 at (1, 1) after
+the restore). `SetChannelVolume` for 2 channels takes 0.3 ms; one poll costs 0.31 ms CPU
+(0.03 % of a core at 1 s; numbers in `performance.md`). The session identifier is
+`<device id>|<exe path in \Device\HarddiskVolumeN form>%b{grouping GUID}`: stable per exe and
+device, as §5.1 needs. `Popen.pid` of the venv's `python.exe` is the launcher, not the
+process that plays (the venv starts the base interpreter as a child): C2's slow test
+must get the PID from the child itself.
+
 So **no audio passes through Wisper**: no capture, no mixing, no virtual cable, no
 added delay, and it works the same for any app. The change takes effect within one
 100 ms loopback block.
@@ -150,11 +164,21 @@ restore journal on disk, written before each change and replayed at the next sta
 ### 4.4 What an "app" is
 
 Sessions are grouped by **process image path** (`QueryFullProcessImageNameW`): all of
-Chrome's sessions (ASSUMED: Chrome plays every tab from one audio process, so Meet and
-YouTube in Chrome are one session; C0 checks it) are one app. The name shown is the
+Chrome's sessions are one app. The name shown is the
 exe's version-info `FileDescription` ("Discord", "Zoom Meetings", "Google Chrome",
 "Microsoft Edge"), else the exe name without `.exe`; the session with
 `IsSystemSoundsSession` is "System sounds"; Wisper's own process is "Wisper (narration)".
+
+**C0 watch run (`tools/ear_spike.py watch 180`, the user's PC, 2026-10-15; VERIFIED):**
+
+| App | What Windows showed |
+|---|---|
+| Google Chrome (the user's tabs) | **one** session for the whole run (pid 4916, the audio process), going active → inactive → active → inactive as playback started and stopped; no second Chrome session. So tabs of one browser can't be split (non-goal, §2) |
+| Brave Browser | its own session (pid 17928), separate from Chrome: the "second browser" workaround works. **Gone** from the list when Brave closed |
+| System sounds | always listed (pid 0), inactive |
+| Discord, Zoom | **not seen** (not opened during the run). Whether an app resets its channel volumes when it reopens its stream (Discord joining a call) is still open; §5.2 step 2 now re-applies the volumes if they drift, so the design doesn't depend on the answer |
+
+Volumes stayed (1, 1) throughout, and a session's identifier didn't change with its state.
 
 ## 5. Design
 
@@ -166,13 +190,13 @@ testable without audio:
 | Name | Responsibility |
 |---|---|
 | `ALL` | The "All apps" choice |
-| `gains(app, left, right, left_vol, right_vol)` | Pure: the §3.2 rule → `(l, r)` |
+| `gains(app, left, right, left_vol, right_vol, app_vol)` | Pure: the §3.2 rule → `(l, r)` |
 | `Selection` | Pure: one channel's choice (`ALL` or a set of app keys) and rule 3.2.5 (`toggle(key)`, `choose_all()`) |
 | `menu_items(apps, selection)` | Pure: the rows of one menu (rule 3.2.7: "(not running)" for a checked app that is gone) |
 | `Journal(path)` | Pure file logic: `{session_identifier: [l, r]}` of the volumes **before** Wisper's first change; `remember()`, `forget()`, `entries()`; atomic write (temp file + `os.replace`) |
 | `Session` | Data: `key` (exe path, lower case), `name`, `pid`, `identifier` (`GetSessionIdentifier`: stable per app and device), `channels`, `state` |
 | `WasapiAudio` | The **only COM code**: `default_output()` → `(device_id, name)`; `sessions(device_id)` → `[Session]` (expired ones skipped); `get(session)` / `set(session, l, r)` channel volumes. comtypes interface definitions for `IMMDeviceEnumerator`, `IMMDevice`, `IAudioSessionManager2`, `IAudioSessionEnumerator`, `IAudioSessionControl2`, `IChannelAudioVolume` (GUIDs and method order as in the §4.1 spike) |
-| `Router(audio, journal, on_update, on_error, poll_s=1.0)` | The `ear-channels` thread (§5.2). `start()`, `choose(side, selection)`, `volume(side, v)`, `reset()`, `close()` are called from the UI thread and only put commands on its queue |
+| `Router(audio, journal, on_update, on_error, poll_s=1.0)` | The `ear-channels` thread (§5.2). `start()`, `choose(side, selection)`, `volume(side, v)`, `app_volume(key, v)`, `reset()`, `close()` are called from the UI thread and only put commands on its queue |
 
 ### 5.2 Threads
 
@@ -184,7 +208,9 @@ testable without audio:
      and start over on the new one;
   2. list sessions; for each one Wisper hasn't seen, **first** journal its current
      volumes, then apply `gains`; for every known session whose gains changed (a
-     command), apply them;
+     command), apply them; for every known session whose volumes read back differently from
+     what Wisper last set (the app or the Volume Mixer changed them), apply them again
+     (the poll reads the volumes anyway, §4.1: 0.31 ms CPU);
   3. if the app list or device changed, call `on_update(device_name, apps, warnings)`.
 - Polling instead of `RegisterSessionNotification`: no COM callback object to implement
   and keep alive, and a 1 s delay is fine for "a new app shows up". C3 measures the
@@ -229,7 +255,7 @@ survives a crash; ASSUMED the folder can be created there, C1 tests with a temp 
 Imports: `app` → `channels`; `channels` is a leaf. `test_architecture.py` and
 `architecture-overview.md` get the new module.
 
-## 6. Decisions (proposed; the user confirms)
+## 6. Decisions (D1–D8 confirmed by the user, 2026-10-15; D9 added after §10.3)
 
 | # | Decision | Why |
 |---|---|---|
@@ -241,6 +267,7 @@ Imports: `app` → `channels`; `channels` is a leaf. `test_architecture.py` and
 | D6 | Restore journal in `%LOCALAPPDATA%\Wisper\` | §4.2: Windows remembers the volumes |
 | D7 | Follow the Windows default output; no device picker | The earphones are the default output; a picker can come later |
 | D8 | Poll every 1 s, no COM notifications | §5.2 |
+| D9 | Volume per app (user, 2026-10-15): one level per app, multiplying the ear's volume, set through the same channel volumes (one mechanism, one journal); one app picker + one scale in the strip, not a slider per app | A slider per app makes the strip's height depend on how many apps play; Windows' own per-app master volume (`ISimpleAudioVolume`) is left alone so the Volume Mixer keeps working as before |
 
 ## 7. Steps
 
@@ -271,6 +298,7 @@ with `node tools/verify.mjs` green and the user's yes before the next.
 | T-EAR-7 | Reset, then close Wisper | after Reset all apps are in both ears; after closing too (check in Windows' Volume Mixer that nothing stays changed) |
 | T-EAR-8 | Left = Discord, kill Wisper in Task Manager, open Discord: it's still left-only; start Wisper | Discord returns to both ears once Wisper is running |
 | T-EAR-9 | Live captions on, an app in neither ear speaks | not captioned, as documented (§3.3); an app in either ear is captioned |
+| T-EAR-10 | While T-EAR-3 plays, App = Discord, volume to 30 % | Discord gets quieter in the left ear; Chrome doesn't change; the Volume Mixer's Discord slider doesn't move |
 
 ## 9. Acceptance criteria
 
@@ -286,7 +314,9 @@ with `node tools/verify.mjs` green and the user's yes before the next.
 
 ## 10. Open questions for the user
 
-1. **D4**: an app in neither ear is silent (proposed), or it keeps playing in both ears?
-2. **D5**: several apps per ear (proposed), or exactly one app per dropdown?
-3. Is a per-ear **volume** what "full control" means, or is more wanted (balance per app,
-   mute per app, swap L/R button)?
+Answered by the user, 2026-10-15:
+
+1. **D4**: an app in neither ear is **silent** (as proposed).
+2. **D5**: **several apps** per ear (as proposed).
+3. "Full control" = **per-ear volume and volume per app** (no swap button, no mute per
+   ear). Volume per app became D9.
