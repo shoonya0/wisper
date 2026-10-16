@@ -29,7 +29,7 @@ const FAST = [
 
 // No formatter check: the code is hand-formatted (aligned tables), by choice.
 const SLOW = [
-  { name: 'slow tests (Kokoro model; skipped when missing)', args: ['-m', 'pytest', '-m', 'slow'] },
+  { name: 'slow tests (Kokoro model, audio output; skipped when missing)', args: ['-m', 'pytest', '-m', 'slow'] },
   // { name: 'GPU smoke test', args: ['-m', 'pytest', '-m', 'gpu'] },
 ];
 

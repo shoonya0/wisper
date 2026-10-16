@@ -202,7 +202,11 @@ testable without audio:
 
 - **Only the `ear-channels` thread touches COM audio objects** (`CoInitializeEx`
   multi-threaded at its start, `CoUninitialize` at its end). COM objects are bound to
-  the thread that made them; the same rule as the Whisper model (CLAUDE.md).
+  the thread that made them; the same rule as the Whisper model (CLAUDE.md). So the router
+  drops its `Session`s and calls `audio.close()` before `CoUninitialize`, and `on_update`
+  passes `App`s (keys and names), never `Session`s (C2 review). Note: `import comtypes`
+  initialises COM as STA on the importing thread (the Tk main thread once `app.py`
+  imports `channels`); that is fine, PortAudio's WASAPI uses STA there too.
 - Loop: every `poll_s` (1 s) or when a command arrives:
   1. read the default output; if it changed, restore the old device's sessions (§5.4)
      and start over on the new one;
