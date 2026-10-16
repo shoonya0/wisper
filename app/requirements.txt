@@ -5,3 +5,4 @@ miniaudio
 kokoro-onnx>=0.6.1,<0.7
 pywinpty>=3.0.5,<4
 pyte>=0.8.2,<0.9
+comtypes>=1.4.17,<1.5

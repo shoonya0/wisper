@@ -37,27 +37,29 @@ inlining them.
 | Terminal | `app/terminal.py` | DeepSeek terminal P1 (spec `2026-10-12-deepseek-terminal`): no Tk. `Terminal` runs a command in a ConPTY pseudo-console (pywinpty), a reader thread feeds a `pyte` screen that keeps scroll-back and answers the program's queries; `write()`, `type_text()` (one line, no Enter), `resize()`, `scroll()`, `close()`; `snapshot()` returns only the rows that changed. Pure `key_bytes()` (Tk key → win32-input-mode keys), `clean()`, `child_env()` | The pseudo-console process and its `terminal-reader` thread; the screen (behind a lock) |
 | Terminal view | `app/terminal_view.py` | DeepSeek terminal P2: the Tk `Text` that draws a `terminal.Snapshot` (colour tags, the cursor), turns keys, Ctrl+V, the wheel, Shift+PageUp/PageDown and its own size (lines × columns) into callbacks; Ctrl+C copies a selection, otherwise it's a key for the program. Imports no project module | The drawn text and style tags (UI thread) |
 | DeepSeek answers | `app/answers.py` | DeepSeek terminal P4: stdlib only. `Inbox` listens on 127.0.0.1 (random port, per-run token) and passes each answer to a callback on its `answers-inbox` thread; run as a script it is `deepseek`'s `Stop` hook (`main`: hook input on stdin → `extract_answer` → `send`, always exit 0, prints nothing). `hook_settings()` builds the `--settings` JSON; pure `plain_text()` turns Markdown into speakable text | The listening socket and its `answers-inbox` thread |
+| Ear channels | `app/channels.py` | Ear channels C1 (spec `2026-10-15-ear-channels`): stdlib only so far (comtypes in C2). Pure `gains()` (§3.2: an app's left/right volume from both ears' `Selection`, the ear volumes and the app's volume), `Selection` (one ear: All apps or a set of apps), `menu_items()` / `silent()` (menu rows, apps in neither ear), `untouched()`; `Journal` keeps the volumes each session had before Wisper's first change in `%LOCALAPPDATA%\Wisper\ear-channels-restore.json` (atomic writes) | The journal file |
 | Legacy | `app/live_transcriber.py` | Older standalone loopback-only transcriber (large-v3-turbo). Duplicates capture logic. Not imported by `app.py`, `run.bat` or docs | Its own copy of everything |
 | Launcher | `app/run.bat` | Starts `app.py` with the venv's `pythonw.exe` | — |
 | Engine (upstream) | `whisper.cpp/` (gitignored) | ggml-org/whisper.cpp clone at `6e4ab85`, built with `-DGGML_VULKAN=1`. DLLs in `build/bin/Release/`, models in `models/` | Not our code; no `_docs/` there |
 
 ## Layers and allowed imports (target, enforced by import-linter once H9 lands)
 
-| From \ To | app | capture | audio_io | whisper_native | priority | tts | playback | narrator | terminal | terminal_view | answers | live_transcriber |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| **app** | — | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
-| **capture** | ❌ | — | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| **audio_io** | ❌ | ❌ | — | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| **whisper_native** | ❌ | ❌ | ❌ | — | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| **priority** | ❌ | ❌ | ❌ | ❌ | — | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| **tts** | ❌ | ❌ | ❌ | ❌ | ❌ | — | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| **playback** | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | — | ❌ | ❌ | ❌ | ❌ | ❌ |
-| **narrator** | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | — | ❌ | ❌ | ❌ | ❌ |
-| **terminal** | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | — | ❌ | ❌ | ❌ |
-| **terminal_view** | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | — | ❌ | ❌ |
-| **answers** | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | — | ❌ |
+| From \ To | app | capture | audio_io | whisper_native | priority | tts | playback | narrator | terminal | terminal_view | answers | channels | live_transcriber |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| **app** | — | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
+| **capture** | ❌ | — | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **audio_io** | ❌ | ❌ | — | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **whisper_native** | ❌ | ❌ | ❌ | — | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **priority** | ❌ | ❌ | ❌ | ❌ | — | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **tts** | ❌ | ❌ | ❌ | ❌ | ❌ | — | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **playback** | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | — | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **narrator** | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | — | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **terminal** | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | — | ❌ | ❌ | ❌ | ❌ |
+| **terminal_view** | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | — | ❌ | ❌ | ❌ |
+| **answers** | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | — | ❌ | ❌ |
+| **channels** | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | — | ❌ |
 
-`app.py` is the only module that wires things together. The ten lower modules are
+`app.py` is the only module that wires things together. The eleven lower modules are
 independent leaves: each depends only on third-party libraries or the stdlib.
 `live_transcriber.py` is legacy; nothing may import it.
 
