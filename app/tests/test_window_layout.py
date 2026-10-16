@@ -71,6 +71,31 @@ def test_every_stt_control_visible_at_minimum_window_size(window):
     assert not cut, f"cut off at the minimum size {width}x{height}: {cut}"
 
 
+def ear_controls(win):
+    return [win.ear_reset_btn, *win.ear_buttons.values(), *win.ear_scales.values(), win.ear_app_box,
+            win.ear_app_scale]
+
+
+@pytest.mark.parametrize("size", ["default", "minimum"])
+def test_ear_strip_below_both_panes_and_fully_visible(window, size):  # ear channels spec §3.1, step C4
+    root = window.root
+    if size == "minimum":
+        width, height = root.minsize()
+        if root.winfo_screenwidth() < width:
+            pytest.skip(f"screen ({root.winfo_screenwidth()} px) is narrower than the minimum window ({width} px)")
+        root.geometry(f"{width}x{height}")
+        root.update()
+        root.update()
+    root.update_idletasks()
+    cut = [str(w) for w in ear_controls(window) if not inside(w, root)]
+    assert not cut, f"ear strip controls cut off at the {size} size: {cut}"
+    stt, tts = panes_of(window)
+    strip_top = window.ear_strip.winfo_rooty()
+    assert stt.winfo_rooty() + stt.winfo_height() <= strip_top and tts.winfo_rooty() + tts.winfo_height() <= strip_top
+    assert window.ear_strip.winfo_width() >= root.winfo_width() - 20     # across both panes
+    assert inside(window.level_bar, stt) and inside(window.speak_btn, tts)   # the panes keep their controls
+
+
 # ---- Narration box (spec N2, test plan T-UI-2): its own Save/Clear/Copy all, no audio yet.
 
 HINDI = "नमस्ते दुनिया। Hello world."
